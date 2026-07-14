@@ -573,7 +573,7 @@ announcements:[
 ],homework:[
   {id:1,subjectId:"math",lessonId:"m1l1",title:"Теңдеулер — Үй жұмысы №1",description:"1-10 есептерді шешіңіз. Шығаруын толық жазыңыз.",dueDate:"2025-03-10",maxScore:10,submissions:[]},
   {id:2,subjectId:"physics",lessonId:"ph1l1",title:"Кинематика — Үй жұмысы",description:"Кинематика есептерін шешіп, сызба салыңыз.",dueDate:"2025-03-12",maxScore:10,submissions:[]},
-],questions:QUESTIONS,topics:TOPICS};
+],questions:QUESTIONS,topics:{}};
 
 /* ════════════════════════════════════════════════════════
    MAIN APP
@@ -954,7 +954,7 @@ function AdminContentManager({content,setContent,showToast}){
   const inp={...GC.input,fontSize:13,marginBottom:0};
 
   // ── helpers ──
-  const getTops=(sid)=>(content.topics||{})[sid]||[];
+  const getTops=(sid)=>((content.topics||{})[sid]||[]).map(t=>({...t,lessons:Array.isArray(t.lessons)?t.lessons:[]}));
   const saveTopic=()=>{
     if(!addTopicName.trim())return showToast("Тақырып атауын жазыңыз","err");
     const t={id:"t"+Date.now(),title:addTopicName.trim(),lessons:[]};
