@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import * as mammoth from "mammoth";
 
 /* ════ RECHARTS ════ */
 if(typeof window!=="undefined"&&!window.Recharts){const s=document.createElement("script");s.src="https://cdn.jsdelivr.net/npm/recharts@2.12.7/umd/Recharts.js";s.onload=()=>{window.Recharts=window.Recharts||Recharts;};document.head.appendChild(s);}
@@ -1766,7 +1767,6 @@ function LessonModal({modal,setModal,selSub,content,setContent,showToast}){
                 let text="";
                 if(file.name.toLowerCase().endsWith(".docx")){
                   const buf=await file.arrayBuffer();
-                  const mammoth=await import("mammoth");
                   const res=await mammoth.extractRawText({arrayBuffer:buf});
                   text=res.value||"";
                 }else{
