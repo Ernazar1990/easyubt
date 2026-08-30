@@ -3087,7 +3087,7 @@ export default function SmartUBT(){
       const initTs=TOPICS[sid]||[];
       const initIds=new Set(initTs.map(t=>t.id));
       const savedTs=savedTopics[sid]||[];
-      const adminAdded=savedTs.filter(t=>!initIds.has(t.id));
+      const adminAdded=savedTs.filter(t=>!initIds.has(t.id)&&!/^chemistry\d+$/.test(t.id));
       mergedTopics[sid]=[...initTs,...adminAdded];
     });
     Object.keys(savedTopics).forEach(sid=>{ if(!mergedTopics[sid])mergedTopics[sid]=savedTopics[sid]; });
@@ -4368,6 +4368,7 @@ export default function SmartUBT(){
      PAGE: SINGLE LESSON
   ════════════════════════════════════════════════════════ */
   const PageLesson=()=>{
+    const [gameMode,setGameMode]=useState(null);
     const sub=SUBJECTS.find(s=>s.id===subjectId);
     const topic=(content.topics[subjectId]||[]).find(t=>t.id===topicId);
     const lesson=topic?.lessons?.find(l=>l.id===lessonId);
@@ -4389,7 +4390,6 @@ export default function SmartUBT(){
     const saveLp=(patch)=>updateUser({lessonProgress:{...user.lessonProgress,[lessonId]:{...lp,...patch}}});
 
     const fixQs    = content.lessonTests?.[lessonId]||[];
-    const [gameMode,setGameMode]=useState(null);
     const hwQs     = content.hwTests?.[lessonId]||[];
     const writingQs= content.writingTasks?.[lessonId]||[];
     const hwResult = lp.hwResult||null;
