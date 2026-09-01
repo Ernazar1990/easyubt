@@ -3123,6 +3123,7 @@ function SmartUBTInner(){
   const [subjectId,setSubjectId]=useState(null);
   const [topicId,setTopicId]=useState(null);
   const [lessonId,setLessonId]=useState(null);
+  const [gameMode,setGameMode]=useState(null);
   const [lessonTab,setLessonTab]=useState("video");
   const [test,setTest]=useState(null);
   const [loginForm,setLoginForm]=useState({email:"",password:""});
@@ -4338,7 +4339,7 @@ function SmartUBTInner(){
                   <div key={ls.id}
                     onClick={()=>{
                       if(!unlocked){setAdminModal({type:"payment"});return;}
-                      setTopicId(tp.id);setLessonId(ls.id);setLessonTab("video");setPage("lesson");
+                      setTopicId(tp.id);setLessonId(ls.id);setLessonTab("video");setGameMode(null);setPage("lesson");
                     }}
                     style={{background:done?"#F0FFF4":unlocked?"#FAFAFE":"#F5F5F5",borderRadius:14,padding:14,
                       cursor:unlocked?"pointer":"not-allowed",
@@ -4388,7 +4389,6 @@ function SmartUBTInner(){
      PAGE: SINGLE LESSON
   ════════════════════════════════════════════════════════ */
   const PageLesson=()=>{
-    const [gameMode,setGameMode]=useState(null);
     const sub=SUBJECTS.find(s=>s.id===subjectId);
     const topic=(content.topics[subjectId]||[]).find(t=>t.id===topicId);
     const lesson=topic?.lessons?.find(l=>l.id===lessonId);
@@ -5175,7 +5175,7 @@ function SmartUBTInner(){
                             setSubjectId(l.sid);setTopicId(null);
                             const allTops=content.topics[l.sid]||[];
                             const tp=allTops.find(t=>t.lessons.some(ls=>ls.id===l.lessonId));
-                            if(tp){setTopicId(tp.id);setLessonId(l.lessonId);setLessonTab("video");setPage("lesson");}
+                            if(tp){setTopicId(tp.id);setLessonId(l.lessonId);setLessonTab("video");setGameMode(null);setPage("lesson");}
                             else{setPage("lessons");}
                           }}>
                           <span style={{fontSize:16}}>{done?"✅":sub?.icon||"📚"}</span>
