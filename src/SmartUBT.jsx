@@ -3034,7 +3034,27 @@ function LessonRichText({text}){
   );
 }
 
-export default function SmartUBT(){
+class ErrorBoundary extends React.Component{
+  constructor(props){super(props);this.state={error:null};}
+  static getDerivedStateFromError(error){return {error};}
+  componentDidCatch(error,info){console.error("SmartUBT crash:",error,info);}
+  render(){
+    if(this.state.error){
+      return(
+        <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24,background:"#0F0B2E",color:"#fff",textAlign:"center",fontFamily:"sans-serif"}}>
+          <div style={{fontSize:48,marginBottom:16}}>⚠️</div>
+          <div style={{fontWeight:900,fontSize:20,marginBottom:10}}>Бір қате орын алды</div>
+          <div style={{fontSize:13,color:"rgba(255,255,255,0.6)",marginBottom:20,maxWidth:500}}>Кешіріңіз, беттің бір жерінде техникалық ақау шықты. Төмендегі мәтінді Ерназарға көрсетіңіз.</div>
+          <pre style={{fontSize:11,color:"#FCA5A5",background:"rgba(0,0,0,0.3)",padding:12,borderRadius:8,maxWidth:600,overflow:"auto",textAlign:"left",marginBottom:20,whiteSpace:"pre-wrap"}}>{String(this.state.error?.stack||this.state.error?.message||this.state.error)}</pre>
+          <button onClick={()=>{try{localStorage.removeItem("ubt3_page");}catch(e){}window.location.href="/";}} style={{padding:"12px 24px",borderRadius:12,background:"#4F46E5",color:"#fff",border:"none",fontWeight:800,cursor:"pointer",fontSize:14}}>🔄 Басты бетке қайту</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function SmartUBTInner(){
   const _rawSaved=gS("ubt3_user",null);
   // Always correct role for known admin/superadmin accounts in saved session
   const _savedUser=_rawSaved
@@ -5391,7 +5411,7 @@ export default function SmartUBT(){
   ════════════════════════════════════════════════════════ */
   const PageUBT=()=>{
     const [step,setStep]=useState("select"); // select | confirm | test
-    const [profSubs,setProfSubs]=useState([]); // max 2 профиль пән
+    const [profSubs,setProfSubs]=useState(["chemistry"]); // жалғыз пән — автоматты таңдалған
     const [mandVariants,setMandVariants]=useState({}); // {sid: variantId}
     const [profVariants,setProfVariants]=useState({});
 
@@ -5461,7 +5481,7 @@ export default function SmartUBT(){
               {i:"📋",l:`${totalQ} сұрақ`},
               {i:"🏆",l:`${totalPts} балл`},
               {i:"⏱",l:"240 минут"},
-              {i:"📚",l:`${MANDATORY.length}+${profSubs.length} пән`},
+              {i:"📚",l:"Химия"},
             ].map((s,i)=>(
               <div key={i} style={{background:"rgba(255,255,255,0.15)",borderRadius:10,padding:"6px 14px",fontSize:13,fontWeight:700}}>
                 {s.i} {s.l}
@@ -5470,55 +5490,25 @@ export default function SmartUBT(){
           </div>
         </div>
 
-        {/* Mandatory subjects */}
-        <div style={{marginBottom:20}}>
-          <div style={{fontWeight:800,fontSize:16,color:"#1E1B4B",marginBottom:12}}>
-            📌 Міндетті пәндер (автоматты)
-          </div>
-          <div style={{display:"flex",flexDirection:"column",gap:8}}>
-            {MANDATORY.map(m=>{
-              const varCount=(content.variants?.[m.id]||[]).length;
-              return(
-                <div key={m.id} style={{display:"flex",alignItems:"center",gap:12,background:"#F0F4FF",borderRadius:14,padding:"14px 18px",border:`2px solid ${m.color}33`}}>
-                  <div style={{width:10,height:10,borderRadius:"50%",background:m.color,flexShrink:0}}/>
-                  <div style={{flex:1,fontWeight:700,fontSize:14,color:"#1E1B4B"}}>{m.label}</div>
-                  <span style={{fontSize:12,color:"#9CA3AF"}}>{m.q} сұрақ • {m.pts} балл</span>
-                  <span style={{background:varCount?"#DCFCE7":"#FEF2F2",color:varCount?"#16A34A":"#EF4444",borderRadius:99,padding:"3px 10px",fontSize:11,fontWeight:700}}>
-                    {varCount?`${varCount} нұсқа`:"Нұсқа жоқ"}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Profile subjects */}
+        {/* Profile subject (жалғыз — химия) */}
         <div style={{marginBottom:24}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-            <div style={{fontWeight:800,fontSize:16,color:"#1E1B4B"}}>🎯 Профиль пәндер (2 таңдаңыз)</div>
-            <span style={{...C.tag,background:profSubs.length===2?"#DCFCE7":"#FEF3C7",color:profSubs.length===2?"#16A34A":"#92400E",fontWeight:700}}>
-              {profSubs.length}/2 таңдалды
-            </span>
-          </div>
+          <div style={{fontWeight:800,fontSize:16,color:"#1E1B4B",marginBottom:12}}>🎯 Бейінді пән</div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(min(160px,45%),1fr))",gap:10}}>
             {PROFILE_SUBJECTS.map(s=>{
-              const sel=profSubs.includes(s.id);
               const varCount=(content.variants?.[s.id]||[]).length;
-              const disabled=!sel&&profSubs.length>=2;
               return(
-                <div key={s.id} onClick={()=>!disabled&&toggleProf(s.id)} style={{
-                  background:sel?"linear-gradient(135deg,#4F46E5,#7C3AED)":"#fff",
-                  borderRadius:14,padding:"16px 14px",cursor:disabled?"not-allowed":"pointer",
-                  border:`2px solid ${sel?"transparent":s.bg||"#EEF0FF"}`,
-                  opacity:disabled?0.5:1,transition:"all 0.15s",
+                <div key={s.id} style={{
+                  background:"linear-gradient(135deg,#4F46E5,#7C3AED)",
+                  borderRadius:14,padding:"16px 14px",
+                  border:"2px solid transparent",
                   textAlign:"center",
                 }}>
                   <div style={{fontSize:28,marginBottom:6}}>{s.icon}</div>
-                  <div style={{fontWeight:800,fontSize:13,color:sel?"#fff":"#1E1B4B",marginBottom:4}}>{s.name}</div>
-                  <div style={{fontSize:11,color:sel?"rgba(255,255,255,0.7)":"#9CA3AF"}}>
+                  <div style={{fontWeight:800,fontSize:13,color:"#fff",marginBottom:4}}>{s.name}</div>
+                  <div style={{fontSize:11,color:"rgba(255,255,255,0.7)"}}>
                     {varCount?`${varCount} нұсқа`:"Нұсқа жоқ"} • 50 балл
                   </div>
-                  {sel&&<div style={{marginTop:6,fontSize:16}}>✓</div>}
+                  <div style={{marginTop:6,fontSize:16}}>✓</div>
                 </div>
               );
             })}
@@ -5529,15 +5519,13 @@ export default function SmartUBT(){
         <div style={{...C.card,padding:16,marginBottom:20,background:"#FFFBEB",border:"1px solid #FCD34D"}}>
           <div style={{fontWeight:800,fontSize:13,color:"#92400E",marginBottom:8}}>📖 ҰБТ форматы туралы</div>
           <div style={{fontSize:12,color:"#78350F",lineHeight:1.7}}>
-            • <b>Міндетті пәндер:</b> Қаз. тарихы (20 сұр•20 балл) + Оқу сауат. (10 сұр•10 балл) + Мат. сауат. (10 сұр•10 балл) = <b>40 балл</b><br/>
-            • <b>Профиль пәндер:</b> 2 пән × 40 сұрақ × 50 балл = <b>100 балл</b><br/>
-            • <b>Барлығы:</b> 80 сұрақ міндетті + 80 профиль = <b>140 балл</b>, 240 минут<br/>
-            • Симуляция нақты ҰБТ уақытымен және форматымен жүреді
+            • <b>Химия:</b> 40 сұрақ × 50 балл = <b>50 балл</b><br/>
+            • Симуляция нақты уақыт форматымен жүреді (~{totalMin} минут)
           </div>
         </div>
 
         {/* Start button */}
-        <button onClick={startUBT} disabled={profSubs.length<2}
+        <button onClick={startUBT} disabled={profSubs.length<1}
           style={{...C.btn,...C.pri,width:"100%",padding:"16px",fontSize:17,fontWeight:900,
             opacity:profSubs.length<2?0.5:1,cursor:profSubs.length<2?"not-allowed":"pointer",
             background:"linear-gradient(135deg,#4F46E5,#7C3AED)",borderRadius:16,
@@ -6762,4 +6750,8 @@ function PasswordChangeForm({user,updateUser,setUsers,showToast,C}){
       }}>🔐 Сақтау</button>
     </div>
   );
+}
+
+export default function SmartUBT(){
+  return <ErrorBoundary><SmartUBTInner/></ErrorBoundary>;
 }
