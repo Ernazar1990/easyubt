@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import * as mammoth from "mammoth";
 
 /* ════ RECHARTS ════ */
-if(typeof window!=="undefined"&&!window.Recharts){const s=document.createElement("script");s.src="https://cdn.jsdelivr.net/npm/recharts@2.12.7/umd/Recharts.js";s.onload=()=>{window.Recharts=window.Recharts||Recharts;};document.head.appendChild(s);}
+if(typeof window!=="undefined"&&!window.Recharts){const s=document.createElement("script");s.src="https://cdn.jsdelivr.net/npm/recharts@2.12.7/umd/Recharts.js";document.head.appendChild(s);}
 
 /* ════ PWA + RESPONSIVE STYLES ════ */
 if(typeof document!=="undefined"){
@@ -4484,9 +4484,9 @@ function SmartUBTInner(){
               <button key={st.id}
                 onClick={()=>{if(!locked)setLessonTab(st.id);else showToast("Алдыңғы бөлімді аяқтаңыз","err");}}
                 style={{...C.btn,padding:"9px 14px",fontSize:12,whiteSpace:"nowrap",flexShrink:0,
-                  borderRadius:12,border:`2px solid ${active?"#4F46E5":st.done?"#22C55E":locked?"#E5E7EB":"#E5E7EB"}`,
-                  background:active?"linear-gradient(135deg,#4F46E5,#7C3AED)":st.done?"#F0FFF4":locked?"#F9FAFB":"#fff",
-                  color:active?"#fff":st.done?"#22C55E":locked?"#D1D5DB":"#6B7280",
+                  borderRadius:12,border:`2px solid ${active?"#4F46E5":locked?"#E5E7EB":st.done?"#22C55E":"#E5E7EB"}`,
+                  background:active?"linear-gradient(135deg,#4F46E5,#7C3AED)":locked?"#F9FAFB":st.done?"#F0FFF4":"#fff",
+                  color:active?"#fff":locked?"#D1D5DB":st.done?"#22C55E":"#6B7280",
                   cursor:locked?"not-allowed":"pointer",
                   boxShadow:active?"0 2px 10px rgba(79,70,229,0.3)":"none"}}>
                 {locked?"🔒":st.done?"✅":st.icon} {st.label}
@@ -4500,7 +4500,13 @@ function SmartUBTInner(){
           <div>
             <div style={{background:"#1E1B4B",borderRadius:20,overflow:"hidden",marginBottom:16,position:"relative",paddingBottom:"56.25%"}}>
               {lesson.videoUrl?(
-                <iframe src={lesson.videoUrl.includes("youtube")?lesson.videoUrl.replace("watch?v=","embed/"):lesson.videoUrl}
+                <iframe src={
+                  lesson.videoUrl.includes("youtube")||lesson.videoUrl.includes("youtu.be")?
+                    lesson.videoUrl.replace("watch?v=","embed/").replace("youtu.be/","youtube.com/embed/")
+                  :lesson.videoUrl.includes("drive.google.com")?
+                    lesson.videoUrl.replace(/\/(view|open)(\?.*)?$/,"/preview")
+                  :lesson.videoUrl
+                }
                   style={{position:"absolute",inset:0,width:"100%",height:"100%",border:"none"}} allowFullScreen title={lesson.title}/>
               ):(
                 <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"#fff",textAlign:"center",padding:24}}>
@@ -4521,7 +4527,7 @@ function SmartUBTInner(){
                     saveLp({videoWatched:true});
                     updateUser({xp:(user.xp||0)+10});
                     showToast("Видео аяқталды! +10 XP ✅");
-                    setTimeout(()=>setLessonTab("bekitu"),600);
+                    setLessonTab("bekitu");
                   }}>✅ Видеоны аяқтадым (+10 XP)</button>
                 </div>
               ):(
