@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import * as mammoth from "mammoth";
 
 /* ════ RECHARTS ════ */
-if(typeof window!=="undefined"&&!window.Recharts){const s=document.createElement("script");s.src="https://cdn.jsdelivr.net/npm/recharts@2.12.7/umd/Recharts.js";document.head.appendChild(s);}
+/* Recharts CDN жүктеу алынып тасталды — Vite React-ты window.React етіп шығармайтындықтан, бұл UMD скрипт ешқашан дұрыс жұмыс істей алмайды (Layer.tsx: forwardRef қатесі). Статистика беті график компоненттерінің жоқтығын өзі тексеріп, оларсыз көрсетеді. */
 
 /* ════ PWA + RESPONSIVE STYLES ════ */
 if(typeof document!=="undefined"){
@@ -3309,10 +3309,13 @@ function SmartUBTInner(){
   };
   const doLogout=()=>{setUser(null);sS("ubt3_user",null);setPage("welcome")};
   const updateUser=useCallback((upd)=>{
-    const nu={...user,...upd};
-    setUser(nu);sS("ubt3_user",nu);
-    setUsers(p=>p.map(u=>u.id===nu.id?nu:u));
-  },[user]);
+    setUser(prev=>{
+      const nu={...prev,...(typeof upd==="function"?upd(prev):upd)};
+      sS("ubt3_user",nu);
+      setUsers(p=>p.map(u=>u.id===nu.id?nu:u));
+      return nu;
+    });
+  },[]);
 
   /* ── STUDY PLAN ── */
 
@@ -4407,7 +4410,7 @@ function SmartUBTInner(){
     const errHasContent = !!(errWork?.videoUrl||errWork?.pdfUrl);
     const fullyDone= videoOk&&bekituOk&&konspektOk&&jazbaOk&&hwOk&&errHasContent;
 
-    const saveLp=(patch)=>updateUser({lessonProgress:{...user.lessonProgress,[lessonId]:{...lp,...patch}}});
+    const saveLp=(patch)=>updateUser(prev=>({lessonProgress:{...prev.lessonProgress,[lessonId]:{...(prev.lessonProgress?.[lessonId]||{}),...patch}}}));
 
     const fixQs    = content.lessonTests?.[lessonId]||[];
     const hwQs     = content.hwTests?.[lessonId]||[];
@@ -4525,7 +4528,7 @@ function SmartUBTInner(){
                   </div>
                   <button style={{...C.btn,...C.pri,width:"100%",padding:"13px 0",fontSize:15,fontWeight:800}} onClick={()=>{
                     saveLp({videoWatched:true});
-                    updateUser({xp:(user.xp||0)+10});
+                    updateUser(prev=>({xp:(prev.xp||0)+10}));
                     showToast("Видео аяқталды! +10 XP ✅");
                     setLessonTab("bekitu");
                   }}>✅ Видеоны аяқтадым (+10 XP)</button>
@@ -4662,7 +4665,7 @@ function SmartUBTInner(){
                 <input ref={fileRef} type="file" accept=".pdf,.jpg,.png,.jpeg" style={{display:"none"}}
                   onChange={e=>{if(e.target.files[0]){
                     saveLp({konspektDone:true,konspektFile:e.target.files[0].name});
-                    updateUser({xp:(user.xp||0)+10});
+                    updateUser(prev=>({xp:(prev.xp||0)+10}));
                     showToast("Конспект жүктелді +10 XP ✅");
                   }}}/>
               </div>
@@ -4678,8 +4681,8 @@ function SmartUBTInner(){
               </div>
               {!konspektOk&&(
                 <button style={{...C.btn,...C.pri,width:"100%",padding:"13px 0",fontSize:15,fontWeight:800}} onClick={()=>{
-                  saveLp({konspektDone:true});updateUser({xp:(user.xp||0)+5});
-                  showToast("Конспект аяқталды ✅");setTimeout(()=>setLessonTab("jazba"),500);
+                  saveLp({konspektDone:true});updateUser(prev=>({xp:(prev.xp||0)+5}));
+                  showToast("Конспект аяқталды ✅");setLessonTab("jazba");
                 }}>✅ Конспектпен таныстым (+5 XP)</button>
               )}
               {konspektOk&&(
@@ -4730,7 +4733,7 @@ function SmartUBTInner(){
                     const pct=Math.round(ok/writingQs.length*100);
                     setWritingChecked(true);setWritingScore(pct);
                     saveLp({jazbaDone:true,jazbaScore:pct});
-                    updateUser({xp:(user.xp||0)+15});
+                    updateUser(prev=>({xp:(prev.xp||0)+15}));
                     showToast(pct>=70?`${ok}/${writingQs.length} дұрыс! +15 XP 🎉`:`${ok}/${writingQs.length} дұрыс`,pct>=70?"ok":"err");
                   }}>✅ Тексеру</button>
                 ):(
