@@ -1784,8 +1784,8 @@ function FlashcardsGame({questions,onDone}){
       </div>
       {flipped&&(
         <div style={{display:"flex",gap:10,marginTop:14}}>
-          <button style={{...C.btn,flex:1,padding:"12px 0",background:"#FEE2E2",color:"#DC2626",fontWeight:800}} onClick={()=>next(false)}>😕 Білмедім</button>
-          <button style={{...C.btn,flex:1,padding:"12px 0",background:"#DCFCE7",color:"#16A34A",fontWeight:800}} onClick={()=>next(true)}>😊 Білдім</button>
+          <button style={{...GC.btn,flex:1,padding:"12px 0",background:"#FEE2E2",color:"#DC2626",fontWeight:800}} onClick={()=>next(false)}>😕 Білмедім</button>
+          <button style={{...GC.btn,flex:1,padding:"12px 0",background:"#DCFCE7",color:"#16A34A",fontWeight:800}} onClick={()=>next(true)}>😊 Білдім</button>
         </div>
       )}
     </div>
