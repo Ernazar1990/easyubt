@@ -1765,9 +1765,10 @@ function FlashcardsGame({questions,onDone}){
   const q=questions[i];
   const answerText=q.type==="match"?(q.pairs||[]).map(p=>`${p.left} → ${p.right}`).join("; "):q.multi?(q.ans_all||[]).map(idx=>q.opts?.[idx]).join(", "):q.opts?.[q.ans];
   const next=(k)=>{
-    setKnown(p=>({...p,[q.id]:k}));
+    const updatedKnown={...known,[q.id]:k};
+    setKnown(updatedKnown);
     setFlipped(false);
-    if(i<questions.length-1)setI(i+1); else onDone?.(known);
+    if(i<questions.length-1)setI(i+1); else onDone?.(updatedKnown);
   };
   return(
     <div>
@@ -1869,7 +1870,7 @@ function TrueFalseGame({questions,onDone}){
     <div style={{textAlign:"center",padding:20}}>
       <div style={{fontSize:40}}>🏁</div>
       <div style={{fontWeight:900,fontSize:24,color:"#4F46E5"}}>{score}/{items.length}</div>
-      <button style={{...C.btn,...C.pri,marginTop:14}} onClick={()=>{setI(0);setScore(0);setAnswered(null);onDone?.();}}>Аяқтау</button>
+      <button style={{...GC.btn,...GC.pri,marginTop:14}} onClick={()=>{setI(0);setScore(0);setAnswered(null);onDone?.();}}>Аяқтау</button>
     </div>
   );
   const cur=items[i];
@@ -1882,21 +1883,21 @@ function TrueFalseGame({questions,onDone}){
   return(
     <div>
       <div style={{fontSize:12,color:"#9CA3AF",marginBottom:10,fontWeight:700}}>{i+1} / {items.length} • ✅ {score}</div>
-      <div style={{...C.card,padding:20,marginBottom:14,textAlign:"center"}}>
+      <div style={{...GC.card,padding:20,marginBottom:14,textAlign:"center"}}>
         <div style={{fontSize:12,color:"#9CA3AF",marginBottom:8}}>{cur.stem}</div>
         <div style={{fontWeight:800,fontSize:16,color:"#1E1B4B"}}>«{cur.statement}»</div>
       </div>
       {answered===null?(
         <div style={{display:"flex",gap:10}}>
-          <button style={{...C.btn,flex:1,padding:"14px 0",background:"#DCFCE7",color:"#16A34A",fontWeight:800,fontSize:15}} onClick={()=>pick(true)}>✅ Дұрыс</button>
-          <button style={{...C.btn,flex:1,padding:"14px 0",background:"#FEE2E2",color:"#DC2626",fontWeight:800,fontSize:15}} onClick={()=>pick(false)}>❌ Бұрыс</button>
+          <button style={{...GC.btn,flex:1,padding:"14px 0",background:"#DCFCE7",color:"#16A34A",fontWeight:800,fontSize:15}} onClick={()=>pick(true)}>✅ Дұрыс</button>
+          <button style={{...GC.btn,flex:1,padding:"14px 0",background:"#FEE2E2",color:"#DC2626",fontWeight:800,fontSize:15}} onClick={()=>pick(false)}>❌ Бұрыс</button>
         </div>
       ):(
         <div>
           <div style={{textAlign:"center",fontWeight:800,color:answered.correct?"#22C55E":"#EF4444",marginBottom:8}}>
             {answered.correct?"✅ Дұрыс тапты!":"❌ Қате"} {!answered.correct&&`— шын мәнінде ${cur.isTrue?"ДҰРЫС":"БҰРЫС"}`}
           </div>
-          <button style={{...C.btn,...C.pri,width:"100%",padding:"12px 0"}} onClick={()=>{setI(p=>p+1);setAnswered(null);}}>Келесі →</button>
+          <button style={{...GC.btn,...GC.pri,width:"100%",padding:"12px 0"}} onClick={()=>{setI(p=>p+1);setAnswered(null);}}>Келесі →</button>
         </div>
       )}
     </div>
