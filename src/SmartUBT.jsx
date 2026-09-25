@@ -4024,7 +4024,7 @@ function SmartUBTInner(){
             <div style={{fontSize:"clamp(17px,4vw,22px)",fontWeight:900,background:"linear-gradient(135deg,#4F46E5,#EC4899)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",cursor:"pointer"}} onClick={()=>setPage("home")}>⚡ Smart UBT</div>
           </div>
           {/* Desktop nav links */}
-          <div style={{display:"flex",gap:2,alignItems:"center",overflow:"hidden"}}>
+          <div className="desktop-only" style={{display:"flex",gap:2,alignItems:"center",overflow:"hidden"}}>
             {navItems.map(n=>(
               <button key={n.p} onClick={()=>setPage(n.p)}
                 style={{...C.btn,padding:"7px 12px",fontSize:13,background:page===n.p?"#EEF2FF":"transparent",color:page===n.p?"#4F46E5":"#6B7280",fontWeight:page===n.p?800:500,borderRadius:10}}>
@@ -4093,7 +4093,7 @@ function SmartUBTInner(){
         {/* ── MAIN CONTENT ── */}
         <main style={{
           padding:page==="admin"?"0":"clamp(10px,3vw,20px) clamp(10px,3vw,16px) calc(72px + env(safe-area-inset-bottom,0px))",
-          maxWidth:page==="admin"?"100%":"min(960px,100%)",
+          maxWidth:page==="admin"?"100%":"min(1280px,100%)",
           margin:"0 auto",
           width:"100%",
           boxSizing:"border-box",
@@ -6810,6 +6810,7 @@ function SmartUBTInner(){
         .dark-card{background:var(--bg-card,#fff);border-color:var(--border-col,#EEF0FF)}
         @media(max-width:400px){.hide-sm{display:none!important}}
         @media(min-width:768px){.hide-md{display:none!important}}
+        @media(max-width:900px){.desktop-only{display:none!important}}
         .line-clamp-2{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
       `}</style>
       <Layout>
