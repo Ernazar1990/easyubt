@@ -188,16 +188,33 @@ const sbFetchUserByEmail=async(email)=>{
 
 // Legacy plaintext login — verified server-side via RPC, password never leaves the DB.
 // Returns the user row (no password field) on success, null on failure.
+// Соңғы кіру әрекетінің себебі: "", "invalid", "network", "http_404" т.б. — кіру бетінде нақты қате көрсету үшін.
+let lastLoginDiag="";
 const sbLegacyLogin=async(email,password)=>{
+  lastLoginDiag="";
   try{
     const res=await fetch(SUPABASE_URL+"/rest/v1/rpc/legacy_login",{
       method:"POST",headers:sbHeaders(),
       body:JSON.stringify({p_email:email,p_password:password})
     });
-    if(!res.ok)return null;
+    if(!res.ok){lastLoginDiag="http_"+res.status;return null;}
     const rows=await res.json();
+    if(!rows[0])lastLoginDiag="invalid";
     return rows[0]||null;
-  }catch(e){console.error("Supabase legacy_login error:",e);return null;}
+  }catch(e){console.error("Supabase legacy_login error:",e);lastLoginDiag="network";return null;}
+};
+
+// Legacy аккаунттың (админ және ескі оқушылар) паролін серверде ауыстыру — RPC, supabase/migration-phase-b-admin.sql іске қосылуы керек.
+// Ескі пароль сервер жағында тексеріледі. true — сәтті, false — сәтсіз.
+const sbChangePassword=async(email,oldPw,newPw)=>{
+  try{
+    const res=await fetch(SUPABASE_URL+"/rest/v1/rpc/legacy_change_password",{
+      method:"POST",headers:sbHeaders(),
+      body:JSON.stringify({p_email:email,p_old:oldPw,p_new:newPw})
+    });
+    if(!res.ok)return false;
+    return (await res.json())===true;
+  }catch(e){console.error("Supabase change password error:",e);return false;}
 };
 
 // ── Supabase Auth (new accounts only — see migration-phase-a.sql) ──
@@ -3559,6 +3576,32 @@ function LessonRichText({text}){
   );
 }
 
+// ── ҰБТ балл жүйесі: 1 балдық (бір жауап/мәнмәтін) және 2 балдық (сәйкестендіру/көп жауап) ──
+const qWeight=q=>(q.type==="match"||q.multi)?2:1;
+const countMistakes=(q,a)=>{
+  if(q.type==="match"){
+    const pairs=q.pairs||[];
+    if(!a||typeof a!=="object")return pairs.length;
+    return pairs.filter((pr,pi)=>{const ci=a[pi];return ci===undefined||ci===null||pairs[ci]?.right!==pr.right;}).length;
+  }
+  if(q.multi){
+    const correct=new Set(q.ans_all||[q.ans]);
+    const given=new Set(Array.isArray(a)?a:(a===undefined||a===null?[]:[a]));
+    let m=0;correct.forEach(x=>{if(!given.has(x))m++;});given.forEach(x=>{if(!correct.has(x))m++;});
+    return m;
+  }
+  return a===q.ans?0:1;
+};
+// 2 балдық: 0 қате = 2, 1 қате = 1, 2+ қате = 0; 1 балдық: дұрыс = 1, қате = 0
+const scoreQ=(q,a)=>{const m=countMistakes(q,a);if(qWeight(q)===1)return m===0?1:0;return m===0?2:m===1?1:0;};
+// 40 сұрақтық тарау тестін ресми ҰБТ ретімен тұрғызу: 1-25 бір жауап, 26-30 мәнмәтін, 31-35 сәйкестендіру, 36-40 көп жауап
+const ubtOrder=pool=>{
+  const num=q=>{const m=String(q.id).match(/_q(\d+)$/);return m?+m[1]:null;};
+  if(pool.length!==40||pool.some(q=>num(q)===null))return pool;
+  const rank=k=>k<=25?k:k>=31?k-5:k+10;
+  return [...pool].sort((a,b)=>rank(num(a))-rank(num(b)));
+};
+
 // Тест таймері — өз алдына бөлек, тиек компонент. Секунд сайын тек ӨЗІ ғана
 // қайта салынады, тест сұрақтары/жауап батырмалары тимейді (жыпылдауды болдырмайды).
 function TestTimer({initialSeconds,onExpire}){
@@ -3628,11 +3671,11 @@ function SmartUBTInner(){
     // Force-update admin (preserve existing data but always set correct role/password)
     const existingAdmin=base.find(u=>u.email===ADMIN_EMAIL);
     base=base.filter(u=>u.email!==ADMIN_EMAIL);
-    base=[...base,{id:3,name:"Нұртай",avatar:"👑",createdAt:"2024-01-01",...(existingAdmin||{}),email:ADMIN_EMAIL,password:"admin",role:"admin",plan:"premium"}];
+    base=[...base,{id:3,name:"Нұртай",avatar:"👑",createdAt:"2024-01-01",password:"admin",...(existingAdmin||{}),email:ADMIN_EMAIL,role:"admin",plan:"premium"}];
     // Force-update superadmin
     const existingSuper=base.find(u=>u.email===SUPER_EMAIL);
     base=base.filter(u=>u.email!==SUPER_EMAIL);
-    base=[...base,{id:4,name:"Ернazar",avatar:"🚀",xp:9999,createdAt:"2024-01-01",...(existingSuper||{}),email:SUPER_EMAIL,password:"admin",role:"superadmin",plan:"premium",subjects:["chemistry"]}];
+    base=[...base,{id:4,name:"Ернazar",avatar:"🚀",xp:9999,createdAt:"2024-01-01",password:"admin",...(existingSuper||{}),email:SUPER_EMAIL,role:"superadmin",plan:"premium",subjects:["chemistry"]}];
     return base;
   });
   const [content,setContent]=useState(()=>{
@@ -3682,6 +3725,8 @@ function SmartUBTInner(){
   const [test,setTest]=useState(null);
   const [loginForm,setLoginForm]=useState({email:"",password:""});
   const [showPw,setShowPw]=useState(false);
+  const [loginErr,setLoginErr]=useState("");
+  const [loginBusy,setLoginBusy]=useState(false);
   const [adminTab,setAdminTab]=useState("dash");
   const [adminModal,setAdminModal]=useState(null);
   const [variantPicker,setVariantPicker]=useState(null); // {sid} when open
@@ -3754,8 +3799,8 @@ function SmartUBTInner(){
         byEmail.set(row.email,fromDbUser(row,existing));
       });
       // Never let a stale/incorrect Supabase row demote or lock out the two hardcoded staff accounts
-      if(byEmail.has(ADMIN_EMAIL))byEmail.set(ADMIN_EMAIL,{...byEmail.get(ADMIN_EMAIL),email:ADMIN_EMAIL,password:"admin",role:"admin",plan:"premium"});
-      if(byEmail.has(SUPER_EMAIL))byEmail.set(SUPER_EMAIL,{...byEmail.get(SUPER_EMAIL),email:SUPER_EMAIL,password:"admin",role:"superadmin",plan:"premium"});
+      if(byEmail.has(ADMIN_EMAIL))byEmail.set(ADMIN_EMAIL,{...byEmail.get(ADMIN_EMAIL),email:ADMIN_EMAIL,role:"admin",plan:"premium"});
+      if(byEmail.has(SUPER_EMAIL))byEmail.set(SUPER_EMAIL,{...byEmail.get(SUPER_EMAIL),email:SUPER_EMAIL,role:"superadmin",plan:"premium"});
       return Array.from(byEmail.values());
     });
   },[]);
@@ -3835,24 +3880,40 @@ function SmartUBTInner(){
     showToast(`Қош келдіңіз, ${nu.name}! 🎉`);setPage("home");
   };
   const doLogin=async()=>{
-    if(!loginForm.email||!loginForm.password)return showToast("Email және құпия сөзді толтырыңыз","err");
-    // 1) Legacy accounts (plaintext password stored server-side) — verified via RPC, password never leaves DB.
-    let dbRow=await sbLegacyLogin(loginForm.email,loginForm.password);
-    let f=null;
-    if(dbRow){
-      const local=users.find(u=>u.email===dbRow.email);
-      f=fromDbUser(dbRow,local);
-    }else{
-      // 2) New-style accounts (real Supabase Auth) — verify via Auth sign-in.
-      const authRes=await sbAuthSignIn(loginForm.email,loginForm.password);
-      if(authRes.ok){
-        f=users.find(u=>u.email===loginForm.email)||(await sbFetchUserByEmail(loginForm.email));
-        if(f&&!f.name)f=fromDbUser(f);
+    const fail=(m)=>{setLoginErr(m);showToast(m,"err");};
+    setLoginErr("");
+    const email=(loginForm.email||"").trim();
+    if(!email)return fail("Email енгізіңіз");
+    if(!loginForm.password)return fail("Құпия сөзді енгізіңіз");
+    if(loginBusy)return;
+    setLoginBusy(true);
+    try{
+      // 1) Legacy аккаунттар (админ, ескі оқушылар) — сервер жағында RPC арқылы тексеріледі.
+      let dbRow=await sbLegacyLogin(email,loginForm.password);
+      const diag=lastLoginDiag;
+      let f=null;
+      if(dbRow){
+        const local=users.find(u=>u.email===dbRow.email);
+        f=fromDbUser(dbRow,local);
+      }else{
+        // 2) Жаңа аккаунттар (Supabase Auth)
+        const authRes=await sbAuthSignIn(email,loginForm.password);
+        if(authRes.ok){
+          f=users.find(u=>u.email===email)||(await sbFetchUserByEmail(email));
+          if(f&&!f.name)f=fromDbUser(f);
+        }else if(diag==="network"||authRes.error==="network_error"){
+          return fail("Серверге қосыла алмадық. Интернетті тексеріп, қайта көріңіз.");
+        }
       }
-    }
-    if(!f)return showToast("Қате email немесе құпия сөз","err");
-    setUser(f);sS("ubt3_user",f);showToast(`Қош келдіңіз, ${f.name}!`);
-    setPage(f.role==="superadmin"||f.role==="admin"||f.role==="curator"?"admin":"home");
+      if(!f){
+        if(diag==="http_404")return fail("Серверде кіру функциясы (legacy_login) табылмады. Supabase-те SQL іске қосылмаған.");
+        if(diag==="http_401"||diag==="http_403")return fail("Сервер кіруге рұқсат бермеді ("+diag.slice(5)+"). Supabase кілтін немесе RLS ережелерін тексеріңіз.");
+        if(diag.startsWith("http_"))return fail("Сервер қатесі ("+diag.slice(5)+"). Кейінірек қайталаңыз.");
+        return fail("Email немесе құпия сөз қате. Аккаунт серверде жоқ болуы да мүмкін — админге хабарласыңыз.");
+      }
+      setUser(f);sS("ubt3_user",f);showToast(`Қош келдіңіз, ${f.name}!`);
+      setPage(f.role==="superadmin"||f.role==="admin"||f.role==="curator"?"admin":"home");
+    }finally{setLoginBusy(false);}
   };
 
   const doForgotPassword=async()=>{
@@ -3907,49 +3968,79 @@ function SmartUBTInner(){
     const configCount=(content[countKey]||{})[lid]||(mode==="hw"?20:10);
     const pool=(mode==="hw"?content.hwTests?.[lid]:content.lessonTests?.[lid])||[];
     if(!pool.length)return showToast(mode==="hw"?"Үй жұмысы сұрақтары жоқ":"Бекіту сұрақтары жоқ","err");
-    const qs=[...pool].sort(()=>Math.random()-0.5);
-    const mins=mode==="hw"?30:20;
+    const isRev=String(lid).endsWith("_review");
+    const qs=isRev?ubtOrder(pool):[...pool].sort(()=>Math.random()-0.5);
+    const mins=mode==="hw"?30:(pool.length>=40?60:20);
     setTest({sid,qs,curr:0,ans:{},time:mins*60,done:false,mode,lessonId:lid});
     setPage("test");
   };
   // Ескерту: секундтық санауыш енді бөлек TestTimer компонентінде — жалпы тест УИ-ін
   // әр секунд сайын толық қайта салудың алдын алу үшін (жыпылдау мәселесін болдырмау).
 
+  const buildQIndex=()=>{
+    const idx={},lessonInfo={},topicById={};
+    Object.values(content.topics||{}).forEach(arr=>(arr||[]).forEach(t=>{topicById[t.id]=t.title;(t.lessons||[]).forEach(l=>{lessonInfo[l.id]={topic:t.title,lesson:l.title};});}));
+    const add=(q,topic)=>{if(q&&q.id!==undefined&&!idx[q.id])idx[q.id]={q,topic};};
+    [content.lessonTests,content.hwTests].forEach(bank=>Object.entries(bank||{}).forEach(([lid,qs])=>(qs||[]).forEach(q=>{
+      const m=String(q.id).match(/^chem_t(\d+)_q/);
+      add(q,m?(topicById["chem_t"+m[1]]||lid):(lessonInfo[lid]?.lesson||lessonInfo[lid]?.topic||lid));
+    })));
+    return idx;
+  };
+  const startQuestionsTest=(qs,sid,mode,mins)=>{
+    if(!qs||!qs.length)return showToast("Сұрақтар табылмады","err");
+    setTest({sid:sid||"chemistry",qs,curr:0,ans:{},time:(mins||Math.max(5,qs.length*2))*60,done:false,mode});
+    setPage("test");
+  };
+  const startMistakeTest=(dueOnly)=>{
+    const idx=buildQIndex();const today=new Date().toISOString().slice(0,10);
+    const ids=Object.entries(user?.mistakes||{}).filter(([id,m])=>!dueOnly||(m.next||"")<=today).map(([id])=>id);
+    const qs=ids.map(id=>idx[id]?.q).filter(Boolean).slice(0,20);
+    if(!qs.length)return showToast(dueOnly?"Бүгін қайталайтын сұрақ жоқ 🎉":"Қателер банкі бос","err");
+    startQuestionsTest(qs.map(q=>({...q})),"chemistry","errors");
+  };
+  const setErrType=(qid,type)=>updateUser(prev=>({mistakes:{...(prev.mistakes||{}),[qid]:{...((prev.mistakes||{})[qid]||{}),type}}}));
+
   const finishTest=(ts=test)=>{
     if(!ts||ts.done)return;
-    let ok=0;const wrong=[];
-    const checkAns=(q,a)=>{
-      if(q.type==="match"){
-        if(!a||typeof a!=="object")return false;
-        return (q.pairs||[]).every((_,pi)=>a[pi]===pi);
-      }
-      if(q.multi){
-        const correct=[...(q.ans_all||[q.ans])].sort((a,b)=>a-b);
-        const given=[...(Array.isArray(a)?a:[a])].sort((a,b)=>a-b);
-        return JSON.stringify(correct)===JSON.stringify(given);
-      }
-      return a===q.ans;
-    };
-    ts.qs.forEach((q,i)=>{if(checkAns(q,ts.ans[i]))ok++;else wrong.push(q.id);});
-    const score=Math.round(ok/ts.qs.length*100);
-    const r={id:Date.now(),sid:ts.sid,subjectName:SUBJECTS.find(s=>s.id===ts.sid)?.name,score,correct:ok,total:ts.qs.length,wrong,date:new Date().toLocaleDateString("kk-KZ"),userId:user?.id,userName:user?.name,mode:ts.mode,lessonId:ts.lessonId,detailedQs:ts.qs.map((q,i)=>({...q,userAns:ts.ans[i]}))};
-    // Save score to lessonProgress
-    if(ts.lessonId){
-      const curLp=(user?.lessonProgress?.[ts.lessonId])||{};
-      if(ts.mode==="fix"){
-        const patch={bekituScore:score};
-        updateUser({lessonProgress:{...user.lessonProgress,[ts.lessonId]:{...curLp,...patch}}});
-      } else if(ts.mode==="hw"){
-        const hwPatch={hwScore:score,hwResult:{score,correct:ok,total:ts.qs.length,detailedQs:ts.qs.map((q,i)=>({...q,userAns:ts.ans[i]})),wrong}};
-        updateUser({lessonProgress:{...user.lessonProgress,[ts.lessonId]:{...curLp,...hwPatch}}});
-      }
+    let pts=0,maxPts=0,ok=0;const wrong=[];
+    const detailed=ts.qs.map((q,i)=>{
+      const w=qWeight(q),pp=scoreQ(q,ts.ans[i]);
+      pts+=pp;maxPts+=w;if(pp===w)ok++;else wrong.push(q.id);
+      return {...q,userAns:ts.ans[i],pts:pp,w};
+    });
+    const score=maxPts?Math.round(pts/maxPts*100):0;
+    const r={id:Date.now(),sid:ts.sid,subjectName:SUBJECTS.find(s=>s.id===ts.sid)?.name,score,points:pts,maxPoints:maxPts,correct:ok,total:ts.qs.length,wrong,date:new Date().toLocaleDateString("kk-KZ"),userId:user?.id,userName:user?.name,mode:ts.mode,lessonId:ts.lessonId,detailedQs:detailed};
+    if(user){
+      const idx=buildQIndex();
+      const addDays=d=>{const x=new Date();x.setDate(x.getDate()+d);return x.toISOString().slice(0,10);};
+      const todayStr=addDays(0);
+      updateUser(prev=>{
+        const patch={};
+        if(ts.lessonId){
+          const curLp=(prev.lessonProgress?.[ts.lessonId])||{};
+          let lpPatch=null;
+          if(ts.mode==="fix")lpPatch={bekituScore:score};
+          else if(ts.mode==="hw")lpPatch={hwScore:score,hwResult:{score,points:pts,maxPoints:maxPts,correct:ok,total:ts.qs.length,detailedQs:detailed,wrong}};
+          if(lpPatch)patch.lessonProgress={...(prev.lessonProgress||{}),[ts.lessonId]:{...curLp,...lpPatch}};
+        }
+        const mb={...(prev.mistakes||{})};
+        detailed.forEach(q=>{
+          const rec=mb[q.id];
+          if(q.pts<q.w){mb[q.id]={...(rec||{}),n:((rec&&rec.n)||0)+1,topic:idx[q.id]?.topic||rec?.topic||"",last:todayStr,next:addDays(2),stage:0};}
+          else if(rec&&ts.mode==="errors"){
+            if((rec.stage||0)>=1)delete mb[q.id];else mb[q.id]={...rec,stage:1,next:addDays(7),last:todayStr};
+          }
+        });
+        patch.mistakes=mb;
+        const hwUpd=ts.mode==="hw"&&ts.lessonId?{[ts.lessonId+"_result"]:{score,correct:ok,total:ts.qs.length,detailedQs:detailed,date:r.date}}:{};
+        patch.homework={...(prev.homework||{}),...hwUpd};
+        patch.xp=(prev.xp||0)+Math.round(score/10)*5;
+        patch.scores=[...(prev.scores||[]),r];
+        return patch;
+      });
     }
     setResults(p=>[r,...p]);
-    const xpGain=Math.round(score/10)*5;
-    if(user){
-      const hwUpd=ts.mode==="hw"&&ts.lessonId?{[ts.lessonId+"_result"]:{score,correct:ok,total:ts.qs.length,detailedQs:r.detailedQs,date:r.date}}:{};
-      updateUser({xp:(user.xp||0)+xpGain,scores:[...(user.scores||[]),r],homework:{...(user.homework||{}),...hwUpd}});
-    }
     setTest(p=>({...p,done:true,result:r}));
     setPage("result");
   };
@@ -4369,10 +4460,10 @@ function SmartUBTInner(){
           <h2 style={{fontWeight:900,fontSize:24,color:"#1E1B4B",marginBottom:4}}>Кіру</h2>
           <p style={{color:"#9CA3AF"}}>Smart UBT аккаунтыңызға кіріңіз</p>
         </div>
-        <input type="email" placeholder="Email" value={loginForm.email} onChange={e=>setLoginForm(p=>({...p,email:e.target.value}))} style={{...C.input,marginBottom:12}}/>
+        <input type="email" placeholder="Email" value={loginForm.email} onChange={e=>{setLoginErr("");setLoginForm(p=>({...p,email:e.target.value}));}} style={{...C.input,marginBottom:12}}/>
         <div style={{position:"relative",marginBottom:24}}>
           <input type={showPw?"text":"password"} placeholder="Құпия сөз" value={loginForm.password}
-            onChange={e=>setLoginForm(p=>({...p,password:e.target.value}))}
+            onChange={e=>{setLoginErr("");setLoginForm(p=>({...p,password:e.target.value}));}}
             style={{...C.input,paddingRight:44}} onKeyDown={e=>e.key==="Enter"&&doLogin()}/>
           <button onClick={()=>setShowPw(p=>!p)}
             style={{position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",
@@ -4380,7 +4471,8 @@ function SmartUBTInner(){
             {showPw?"🙈":"👁️"}
           </button>
         </div>
-        <button style={{...C.btn,...C.pri,width:"100%",padding:14,fontSize:15}} onClick={doLogin}>Кіру →</button>
+        {loginErr&&<div role="alert" style={{background:"#FEF2F2",border:"1px solid #FCA5A5",color:"#B91C1C",borderRadius:12,padding:"10px 14px",fontSize:13,fontWeight:700,lineHeight:1.5,marginTop:-8,marginBottom:14}}>⚠️ {loginErr}</div>}
+        <button disabled={loginBusy} style={{...C.btn,...C.pri,width:"100%",padding:14,fontSize:15,opacity:loginBusy?0.7:1}} onClick={doLogin}>{loginBusy?"Тексеріліп жатыр...":"Кіру →"}</button>
         <div style={{textAlign:"center",marginTop:10}}>
           <span onClick={doForgotPassword} style={{fontSize:12,color:"#6366F1",cursor:"pointer",fontWeight:600}}>Құпия сөзді ұмыттыңыз ба?</span>
         </div>
@@ -5444,7 +5536,7 @@ function SmartUBTInner(){
                 return sec?<div style={{fontWeight:800,fontSize:13,color:sec.color||"#4F46E5",marginBottom:2}}>{sec.label} — {test.curr-sec.start+1}/{sec.count}</div>:null;
               })()}
             <div style={{fontWeight:800,fontSize:15,color:"#1E1B4B"}}>{test.mode==="ubt"?"🎓 ҰБТ Симуляциясы":SUBJECTS.find(s=>s.id===test.sid)?.name}
-              {test.variantTitle?` — ${test.variantTitle}`:test.mode==="hw"?" — 📝 Үй жұмысы":test.mode==="fix"?" — 🔄 Бекіту":test.retry?" — 🔄 Қатемен жұмыс":""}</div>
+              {test.variantTitle?` — ${test.variantTitle}`:test.mode==="hw"?" — 📝 Үй жұмысы":test.mode==="fix"?" — 🔄 Бекіту":test.mode==="errors"||test.retry?" — 🔄 Қатемен жұмыс":test.mode==="practice"?" — 🎯 Қосымша жаттығу":""}</div>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
               <div style={{color:"#9CA3AF",fontSize:13}}>{curr+1} / {qs.length} сұрақ</div>
               <button onClick={()=>setReportModal({q,sid:test.sid,idx:curr})} style={{background:"none",border:"1px solid #FCA5A5",borderRadius:8,padding:"3px 8px",fontSize:11,color:"#EF4444",cursor:"pointer",fontWeight:600}}>🚩 Хабарлау</button>
@@ -5550,28 +5642,63 @@ function SmartUBTInner(){
     if(!test?.result)return null;
     const{result}=test;
     const g=result.score>=80?{l:"Өте жақсы! 🏆",c:"#22C55E",bg:"#F0FFF4",bc:"#86EFAC"}:result.score>=60?{l:"Жақсы 👍",c:"#F59E0B",bg:"#FFFBEB",bc:"#FCD34D"}:{l:"Жаттығу керек 💪",c:"#EF4444",bg:"#FFF5F5",bc:"#FCA5A5"};
+    const dq=result.detailedQs||[];
+    const idx=buildQIndex();
+    const mb=user?.mistakes||{};
+    const wt={};
+    dq.forEach(q=>{if(q.pts<q.w){const t=idx[q.id]?.topic||"Басқа тақырып";wt[t]=(wt[t]||0)+1;}});
+    const weak=Object.entries(wt).sort((a,b)=>b[1]-a[1]).slice(0,4);
+    const practiceFor=topic=>{
+      const done=new Set(dq.map(q=>q.id));
+      const all=Object.values(idx).filter(o=>o.topic===topic);
+      const fresh=all.filter(o=>!done.has(o.q.id));
+      const pick=[...(fresh.length>=3?fresh:all)].sort(()=>Math.random()-0.5).slice(0,3).map(o=>({...o.q}));
+      startQuestionsTest(pick,result.sid,"practice",8);
+    };
+    const retry=()=>{
+      if(result.lessonId&&(result.mode==="fix"||result.mode==="hw"))startLessonTest(result.sid,result.lessonId,result.mode);
+      else if(result.mode==="errors"||result.mode==="practice")startMistakeTest(false);
+      else startTest(test.sid);
+    };
+    const ERR_TYPES=["Формула білмеу","Есептеуден қателесу","Мәнмәтінді дұрыс оқымау"];
+    const optList=(q,arr)=>(Array.isArray(arr)?arr:[]).map(i=>q.opts?.[i]).filter(Boolean).join("; ")||"Жауап берілмеді";
     return(
-      <div style={{maxWidth:720,margin:"0 auto"}}>
-        <div style={{...C.card,textAlign:"center",marginBottom:20,padding:36,background:g.bg,border:`2px solid ${g.bc}`}}>
-          <div style={{fontSize:60,marginBottom:8}}>{result.score>=80?"🏆":result.score>=60?"🎉":"💪"}</div>
-          <h2 style={{fontSize:26,fontWeight:900,color:g.c,marginBottom:6}}>{g.l}</h2>
-          <div style={{fontSize:60,fontWeight:900,color:g.c,lineHeight:1,marginBottom:6}}>{result.score}%</div>
-          <div style={{color:"#6B7280"}}>{result.correct}/{result.total} дұрыс • {result.subjectName} • {result.date}</div>
-          <div style={{background:"rgba(0,0,0,0.06)",borderRadius:99,height:12,margin:"20px 0"}}>
+      <div style={{maxWidth:820,margin:"0 auto"}}>
+        <div style={{...C.card,textAlign:"center",marginBottom:20,padding:"32px 24px",background:g.bg,border:`2px solid ${g.bc}`}}>
+          <div style={{fontSize:56,marginBottom:6}}>{result.score>=80?"🏆":result.score>=60?"🎉":"💪"}</div>
+          <h2 style={{fontSize:24,fontWeight:900,color:g.c,marginBottom:6}}>{g.l}</h2>
+          <div style={{fontSize:56,fontWeight:900,color:g.c,lineHeight:1}}>{result.points!==undefined?result.points:result.correct}<span style={{fontSize:26,opacity:.7}}> / {result.maxPoints!==undefined?result.maxPoints:result.total} балл</span></div>
+          <div style={{fontWeight:800,fontSize:18,color:g.c,marginTop:4}}>{result.score}%</div>
+          <div style={{color:"#6B7280",fontSize:13,marginTop:6}}>{result.correct}/{result.total} сұрақ толық дұрыс • {result.subjectName} • {result.date}</div>
+          <div style={{background:"rgba(0,0,0,0.06)",borderRadius:99,height:12,margin:"18px 0"}}>
             <div style={{background:`linear-gradient(90deg,${g.c},${g.c}bb)`,height:12,borderRadius:99,width:`${result.score}%`,transition:"width 1.2s"}}/>
           </div>
           <div style={{display:"flex",gap:10,justifyContent:"center",flexWrap:"wrap"}}>
-            <button style={{...C.btn,...C.pri}} onClick={()=>startTest(test.sid)}>🔄 Қайта тапсыру</button>
-            {result.wrong?.length>0&&<button style={{...C.btn,...C.warn,fontWeight:700}} onClick={()=>startTest(test.sid,result.wrong)}>🔄 Қатемен жұмыс ({result.wrong.length})</button>}
+            <button style={{...C.btn,...C.pri}} onClick={retry}>🔄 Қайта тапсыру</button>
+            {result.wrong?.length>0&&<button style={{...C.btn,...C.warn,fontWeight:700}} onClick={()=>startQuestionsTest(test.qs.filter(q=>result.wrong.includes(q.id)).map(q=>({...q})),test.sid,"errors")}>🔄 Қатемен жұмыс ({result.wrong.length})</button>}
             {result.score>=70&&<button style={{...C.btn,background:"linear-gradient(135deg,#F59E0B,#D97706)",color:"#fff",fontWeight:700}} onClick={()=>setCertModal(result)}>🏅 Сертификат</button>}
             <button style={{...C.btn,...C.sec}} onClick={()=>setPage("home")}>🏠 Басты бет</button>
             <button style={{...C.btn,background:"#25D366",color:"#fff",fontWeight:700}} onClick={()=>{
-              const txt=`🎓 SmartUBT нәтижем: ${result.score}% (${result.correct}/${result.total} дұрыс) — ${result.subjectName}! 💪`;
+              const txt=`🎓 SmartUBT нәтижем: ${result.points!==undefined?result.points+"/"+result.maxPoints+" балл":result.score+"%"} — ${result.subjectName}! 💪`;
               window.open("https://wa.me/?text="+encodeURIComponent(txt),"_blank");
             }}>📤 Бөлісу</button>
           </div>
         </div>
-        {/* ERROR WORK RESOURCES */}
+        {weak.length>0&&(
+          <div style={{...C.card,padding:20,marginBottom:20,border:"2px solid #FCA5A5",background:"#FFF5F5"}}>
+            <div style={{fontWeight:900,fontSize:16,color:"#B91C1C",marginBottom:4}}>🎯 Әлсіз тақырыптарыңыз</div>
+            <div style={{fontSize:13,color:"#6B7280",marginBottom:12}}>Қателер «Қателер банкіңізге» сақталды: 2 күннен, содан 1 аптадан кейін қайта ұсынылады.</div>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {weak.map(([t,n])=>(
+                <div key={t} style={{display:"flex",alignItems:"center",gap:10,background:"#fff",borderRadius:12,padding:"10px 14px",flexWrap:"wrap"}}>
+                  <span style={{flex:1,minWidth:160,fontWeight:700,fontSize:14,color:"#1E1B4B"}}>{t}</span>
+                  <span style={{fontSize:12,fontWeight:800,color:"#EF4444"}}>{n} қате</span>
+                  <button style={{...C.btn,...C.sec,padding:"6px 12px",fontSize:12,fontWeight:700}} onClick={()=>practiceFor(t)}>➕ 3 ұқсас сұрақ</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         {result.score<70&&(()=>{
           const ew=content.errorWork?.[result.sid];
           if(!ew||(!ew.videoUrl&&!ew.pdfUrl))return null;
@@ -5585,32 +5712,50 @@ function SmartUBTInner(){
                 </div>
               </div>
               <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-                {ew.videoUrl&&(
-                  <a href={ew.videoUrl} target="_blank" rel="noopener" style={{...C.btn,background:"#EF4444",color:"#fff",textDecoration:"none",display:"inline-flex",alignItems:"center",gap:6,padding:"10px 18px",borderRadius:12,fontWeight:700}}>
-                    ▶ Видео талдау
-                  </a>
-                )}
-                {ew.pdfUrl&&(
-                  <a href={ew.pdfUrl} target="_blank" rel="noopener" style={{...C.btn,background:"#6366F1",color:"#fff",textDecoration:"none",display:"inline-flex",alignItems:"center",gap:6,padding:"10px 18px",borderRadius:12,fontWeight:700}}>
-                    📄 PDF талдау
-                  </a>
-                )}
+                {ew.videoUrl&&(<a href={ew.videoUrl} target="_blank" rel="noopener" style={{...C.btn,background:"#EF4444",color:"#fff",textDecoration:"none",display:"inline-flex",alignItems:"center",gap:6,padding:"10px 18px",borderRadius:12,fontWeight:700}}>▶ Видео талдау</a>)}
+                {ew.pdfUrl&&(<a href={ew.pdfUrl} target="_blank" rel="noopener" style={{...C.btn,background:"#6366F1",color:"#fff",textDecoration:"none",display:"inline-flex",alignItems:"center",gap:6,padding:"10px 18px",borderRadius:12,fontWeight:700}}>📄 PDF талдау</a>)}
               </div>
             </div>
           );
         })()}
         <h3 style={{fontWeight:900,marginBottom:14,fontSize:17}}>📋 Толық талдау</h3>
-        {(result.detailedQs||[]).map((q,i)=>{
-          const ok=q.userAns===q.ans;
-          return <div key={i} style={{...C.card,marginBottom:10,borderLeft:`4px solid ${ok?'#22C55E':'#EF4444'}`,padding:16}}>
-            <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
-              <span style={{fontWeight:700,flex:1,lineHeight:1.5}}>{i+1}. {q.q}</span>
-              <span style={{flexShrink:0,marginLeft:8,fontSize:20}}>{ok?"✅":"❌"}</span>
+        {dq.map((q,i)=>{
+          const full=q.pts===q.w,part=q.pts>0&&!full;
+          const col=full?"#22C55E":part?"#F59E0B":"#EF4444";
+          const topic=idx[q.id]?.topic;
+          return <div key={i} style={{...C.card,marginBottom:10,borderLeft:`4px solid ${col}`,padding:16}}>
+            <div style={{display:"flex",justifyContent:"space-between",marginBottom:8,gap:8}}>
+              <span style={{fontWeight:700,flex:1,lineHeight:1.5,whiteSpace:"pre-wrap"}}>{i+1}. {q.q}</span>
+              <span style={{flexShrink:0,fontSize:12,fontWeight:900,color:col,background:full?"#F0FFF4":part?"#FFFBEB":"#FFF5F5",borderRadius:8,padding:"4px 8px",height:"fit-content"}}>{q.pts}/{q.w} балл</span>
             </div>
-            <div style={{fontSize:13,color:"#6B7280",marginBottom:ok?0:4}}>Жауабыңыз: <strong style={{color:ok?"#22C55E":"#EF4444"}}>{q.opts?.[q.userAns]??"Жауап берілмеді"}</strong></div>
-            {!ok&&<div style={{fontSize:13,color:"#6B7280",marginBottom:6}}>✅ Дұрыс жауап: <strong style={{color:"#22C55E"}}>{q.opts?.[q.ans]??""}</strong></div>}
+            {topic&&<div style={{fontSize:11,color:"#9CA3AF",marginBottom:6}}>🏷 {topic}</div>}
+            {q.type==="match"?(
+              <div style={{fontSize:13,display:"flex",flexDirection:"column",gap:4,marginBottom:4}}>
+                {(q.pairs||[]).map((pr,pi)=>{
+                  const chosen=q.userAns&&q.userAns[pi]!==undefined?q.pairs[q.userAns[pi]]?.right:null;
+                  const pok=chosen===pr.right;
+                  return <div key={pi} style={{color:pok?"#16A34A":"#DC2626"}}>{pok?"✅":"❌"} {pr.left} → <strong>{chosen||"таңдалмады"}</strong>{!pok&&<span style={{color:"#6B7280"}}> (дұрысы: {pr.right})</span>}</div>;
+                })}
+              </div>
+            ):q.multi?(
+              <>
+                <div style={{fontSize:13,color:"#6B7280",marginBottom:4}}>Жауабыңыз: <strong style={{color:col}}>{optList(q,q.userAns)}</strong></div>
+                {!full&&<div style={{fontSize:13,color:"#6B7280",marginBottom:4}}>✅ Дұрыс жауаптар: <strong style={{color:"#22C55E"}}>{optList(q,q.ans_all)}</strong></div>}
+              </>
+            ):(
+              <>
+                <div style={{fontSize:13,color:"#6B7280",marginBottom:4}}>Жауабыңыз: <strong style={{color:col}}>{q.opts?.[q.userAns]??"Жауап берілмеді"}</strong></div>
+                {!full&&<div style={{fontSize:13,color:"#6B7280",marginBottom:4}}>✅ Дұрыс жауап: <strong style={{color:"#22C55E"}}>{q.opts?.[q.ans]??""}</strong></div>}
+              </>
+            )}
             {q.exp&&<div style={{fontSize:13,background:darkMode?"rgba(79,70,229,0.15)":"#EEF2FF",borderRadius:10,padding:"10px 14px",color:darkMode?"#A5B4FC":"#4338CA",marginTop:4}}>💡 {q.exp}</div>}
-            {!ok&&<button onClick={()=>setReportModal({q,sid:test?.result?.sid,idx:i})} style={{background:"none",border:"none",cursor:"pointer",color:"#EF4444",fontSize:11,marginTop:4,padding:0,fontFamily:"inherit"}}>🚩 Қате сұрақты хабарлау</button>}
+            {!full&&(
+              <div style={{marginTop:8,display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+                <span style={{fontSize:11,color:"#9CA3AF"}}>Қате түрі:</span>
+                {ERR_TYPES.map(t=>{const on=mb[q.id]?.type===t;return <button key={t} onClick={()=>setErrType(q.id,t)} style={{border:`1px solid ${on?"#4F46E5":"#E5E7EB"}`,background:on?"#EEF2FF":"#fff",color:on?"#4F46E5":"#6B7280",borderRadius:99,padding:"3px 10px",fontSize:11,fontWeight:on?800:500,cursor:"pointer",fontFamily:"inherit"}}>{t}</button>;})}
+                <button onClick={()=>setReportModal({q,sid:test?.result?.sid,idx:i})} style={{background:"none",border:"none",cursor:"pointer",color:"#EF4444",fontSize:11,marginLeft:"auto",padding:0,fontFamily:"inherit"}}>🚩 Қате сұрақты хабарлау</button>
+              </div>
+            )}
           </div>;
         })}
       </div>
@@ -7278,6 +7423,25 @@ function SmartUBTInner(){
 
 function PasswordChangeForm({user,updateUser,setUsers,showToast,C}){
   const [pw,setPw]=React.useState({cur:"",nw:"",nw2:""});
+  const [busy,setBusy]=React.useState(false);
+  const save=async()=>{
+    if(busy)return;
+    if(!pw.cur)return showToast("Қазіргі парольді енгізіңіз","err");
+    if(pw.nw.length<6)return showToast("Кем дегенде 6 таңба","err");
+    if(pw.nw!==pw.nw2)return showToast("Парольдер сәйкес келмейді","err");
+    if(pw.nw===pw.cur)return showToast("Жаңа пароль ескісімен бірдей болмауы керек","err");
+    // Supabase Auth арқылы тіркелген аккаунттар паролін email сілтемесі арқылы ауыстырады
+    if(user.authId)return showToast("Бұл аккаунт үшін кіру бетіндегі «Құпия сөзді ұмыттым» арқылы ауыстырыңыз","err");
+    setBusy(true);
+    // Ескі пароль серверде тексеріледі, жаңасы серверде сақталады — әйтпесе келесі кіруде жұмыс істемейді
+    const okServer=await sbChangePassword(user.email,pw.cur,pw.nw);
+    setBusy(false);
+    if(!okServer)return showToast("Пароль өзгертілмеді: қазіргі пароль қате немесе сервер жауап бермеді","err");
+    setUsers(p=>p.map(u=>u.id===user.id?{...u,password:pw.nw}:u));
+    updateUser({password:pw.nw});
+    setPw({cur:"",nw:"",nw2:""});
+    showToast("Пароль өзгертілді ✅");
+  };
   return(
     <div style={{...C.card,padding:24,marginBottom:16}}>
       <div style={{fontWeight:800,fontSize:17,marginBottom:4}}>🔐 Құпия сөзді өзгерту</div>
@@ -7285,15 +7449,7 @@ function PasswordChangeForm({user,updateUser,setUsers,showToast,C}){
       <input type="password" value={pw.cur} onChange={e=>setPw(p=>({...p,cur:e.target.value}))} style={{...C.input,marginBottom:10}} placeholder="Қазіргі құпия сөз"/>
       <input type="password" value={pw.nw} onChange={e=>setPw(p=>({...p,nw:e.target.value}))} style={{...C.input,marginBottom:10}} placeholder="Жаңа құпия сөз (мин. 6 таңба)"/>
       <input type="password" value={pw.nw2} onChange={e=>setPw(p=>({...p,nw2:e.target.value}))} style={{...C.input,marginBottom:14}} placeholder="Жаңа құпия сөзді растаңыз"/>
-      <button style={{...C.btn,...C.pri,padding:"11px 24px",fontWeight:800}} onClick={()=>{
-        if(pw.cur!==user.password)return showToast("Қазіргі пароль қате","err");
-        if(pw.nw.length<6)return showToast("Кем дегенде 6 таңба","err");
-        if(pw.nw!==pw.nw2)return showToast("Парольдер сәйкес келмейді","err");
-        setUsers(p=>p.map(u=>u.id===user.id?{...u,password:pw.nw}:u));
-        updateUser({password:pw.nw});
-        setPw({cur:"",nw:"",nw2:""});
-        showToast("Пароль өзгертілді ✅");
-      }}>🔐 Сақтау</button>
+      <button disabled={busy} style={{...C.btn,...C.pri,padding:"11px 24px",fontWeight:800,opacity:busy?0.6:1}} onClick={save}>{busy?"Сақталуда...":"🔐 Сақтау"}</button>
     </div>
   );
 }
