@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import * as mammoth from "mammoth";
+import { FINAL_EXTRA } from "./finalExtra.js";
 
 /* ════ RECHARTS ════ */
 /* Recharts CDN жүктеу алынып тасталды — Vite React-ты window.React етіп шығармайтындықтан, бұл UMD скрипт ешқашан дұрыс жұмыс істей алмайды (Layer.tsx: forwardRef қатесі). Статистика беті график компоненттерінің жоқтығын өзі тексеріп, оларсыз көрсетеді. */
@@ -113,9 +114,11 @@ const sS=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch{}};
    sync working now, but should be tightened later — anyone
    with this anon key can read all rows incl. passwords.
 ════════════════════════════════════════════════════════ */
-const SUPABASE_URL="https://xdogbiyqcrrjlddmgiti.supabase.co";
-const SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhkb2diaXlxY3JyamxkZG1naXRpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkyOTI4NzQsImV4cCI6MjA4NDg2ODg3NH0.pDuX1ZaZPv4-9mUcjGp3w76ti9XNc0D9oXoSSdJrXHs";
-
+// Supabase баптауы: Vercel → Settings → Environment Variables ішінде VITE_SUPABASE_URL және VITE_SUPABASE_ANON_KEY қойылады.
+// Кілт кодта сақталмайды. Қойылмаса — URL әдепкі мәнге түседі, кілт бос болады (сервермен байланыс өшірулі).
+const ENV=(typeof import.meta!=="undefined"&&import.meta.env)||{};
+const SUPABASE_URL=ENV.VITE_SUPABASE_URL||"https://lerecgnvxthvrmyzmkcx.supabase.co";
+const SUPABASE_ANON_KEY=ENV.VITE_SUPABASE_ANON_KEY||"";
 const sbHeaders=(extra={})=>({
   "apikey":SUPABASE_ANON_KEY,
   "Authorization":"Bearer "+SUPABASE_ANON_KEY,
@@ -154,7 +157,8 @@ const fromDbUser=(row,existingLocal=null)=>({
 // Upsert one user row into Supabase (insert or update by email). Never throws — fails silently to console so it never breaks the local-first UX.
 const sbUpsertUser=async(u)=>{
   try{
-    const res=await fetch(SUPABASE_URL+"/rest/v1/users?on_conflict=email",{
+    // select= міндетті: RETURNING password бағанын сұрамау үшін (ол оқуға жабық)
+    const res=await fetch(SUPABASE_URL+"/rest/v1/users?on_conflict=email&select="+SAFE_USER_COLS,{
       method:"POST",
       headers:sbHeaders({"Prefer":"resolution=merge-duplicates,return=representation"}),
       body:JSON.stringify(toDbUser(u))
@@ -2194,7 +2198,7 @@ const parseUploadedChapterDoc=(rawText)=>{
 };
 
 // ── ОЙЫН 1: Флэш-карттар (сұрақ/жауап аударылатын карточкалар) ──
-function FlashcardsGame({questions,onDone}){
+function FlashcardsGame({questions,onDone,C}){
   const [i,setI]=useState(0);
   const [flipped,setFlipped]=useState(false);
   const [known,setKnown]=useState({});
@@ -2288,7 +2292,7 @@ function MatchingCardGame({questions,onDone}){
 }
 
 // ── ОЙЫН 3: Дұрыс/Бұрыс (тұжырым дұрыс па, бұрыс па?) ──
-function TrueFalseGame({questions,onDone}){
+function TrueFalseGame({questions,onDone,C}){
   const items=React.useMemo(()=>{
     const usable=questions.filter(q=>q.opts&&q.opts.length>=2);
     return usable.map((q,i)=>{
@@ -3577,14 +3581,16 @@ function LessonRichText({text}){
 }
 
 // ── ҰБТ балл жүйесі: 1 балдық (бір жауап/мәнмәтін) және 2 балдық (сәйкестендіру/көп жауап) ──
-const qWeight=q=>(q.type==="match"||q.multi)?2:1;
+const isMultiQ=q=>!!(q.multi||q.type==="multi");
+const qWeight=q=>(q.type==="match"||isMultiQ(q))?2:1;
+// Қате санын есептеу (нәтиже беті мен қателер банкі үшін; баллға әсер етпейді)
 const countMistakes=(q,a)=>{
   if(q.type==="match"){
     const pairs=q.pairs||[];
     if(!a||typeof a!=="object")return pairs.length;
     return pairs.filter((pr,pi)=>{const ci=a[pi];return ci===undefined||ci===null||pairs[ci]?.right!==pr.right;}).length;
   }
-  if(q.multi){
+  if(isMultiQ(q)){
     const correct=new Set(q.ans_all||[q.ans]);
     const given=new Set(Array.isArray(a)?a:(a===undefined||a===null?[]:[a]));
     let m=0;correct.forEach(x=>{if(!given.has(x))m++;});given.forEach(x=>{if(!correct.has(x))m++;});
@@ -3592,14 +3598,71 @@ const countMistakes=(q,a)=>{
   }
   return a===q.ans?0:1;
 };
-// 2 балдық: 0 қате = 2, 1 қате = 1, 2+ қате = 0; 1 балдық: дұрыс = 1, қате = 0
-const scoreQ=(q,a)=>{const m=countMistakes(q,a);if(qWeight(q)===1)return m===0?1:0;return m===0?2:m===1?1:0;};
-// 40 сұрақтық тарау тестін ресми ҰБТ ретімен тұрғызу: 1-25 бір жауап, 26-30 мәнмәтін, 31-35 сәйкестендіру, 36-40 көп жауап
-const ubtOrder=pool=>{
-  const num=q=>{const m=String(q.id).match(/_q(\d+)$/);return m?+m[1]:null;};
-  if(pool.length!==40||pool.some(q=>num(q)===null))return pool;
-  const rank=k=>k<=25?k:k>=31?k-5:k+10;
-  return [...pool].sort((a,b)=>rank(num(a))-rank(num(b)));
+// ── Ресми бағалау кестесі (ЕНТ Ережелері, 18-тармақ, 26.02.2026 редакциясы) ──
+// Сәйкестендіру және бір/бірнеше дұрыс жауабы бар тапсырмалар (ең көбі 3 дұрыс жауап).
+// Кесте: [дұрыс жауап саны][таңдалған дұрыс, таңдалған артық] → балл. Көрсетілмеген жағдай = 0 балл.
+const MULTI_SCORE_TABLE={
+  1:{"1,0":2,"1,1":1},                               // 1 дұрыс: дұрысы=2; дұрысы+1 қате=1; 2+ қате=0
+  2:{"2,0":2,"1,0":1,"1,1":1,"2,1":1},               // 2 дұрыс: екеуі=2; біреуі=1; 1+1 қате=1; екеуі+1 қате=1
+  3:{"3,0":2,"2,0":1,"2,1":1,"3,1":1},               // 3 дұрыс: үшеуі=2; екеуі=1; екеуі+1 қате=1; үшеуі+1 қате=1; тек біреуі=0
+};
+// 4 және одан көп сәйкестік (ресми кестеде жоқ): 3 дұрыстың ережесін жалпылаймыз — барлығы=2, 1 қателіктен артық емес және кемінде (c-1) дұрыс=1.
+const multiScore=(c,s,w)=>{
+  if(w>=2||c<=0)return 0;
+  if(c<=3)return (MULTI_SCORE_TABLE[c]||{})[s+","+w]||0;
+  if(s===c&&w===0)return 2;
+  return (s>=c-1&&s>=2)?1:0;
+};
+// Таңдалған жауаптардан c (дұрыс саны), s (таңдалған дұрыс), w (таңдалған артық) санын шығару
+const answerCounts=(q,a)=>{
+  if(q.type==="match"){
+    const pairs=q.pairs||[];let s=0,w=0;
+    if(a&&typeof a==="object")pairs.forEach((pr,pi)=>{const ci=a[pi];if(ci===undefined||ci===null)return;if(pairs[ci]?.right===pr.right)s++;else w++;});
+    return {c:pairs.length,s,w};
+  }
+  const correct=new Set(q.ans_all||[q.ans]);
+  const given=new Set(Array.isArray(a)?a:(a===undefined||a===null?[]:[a]));
+  let s=0,w=0;given.forEach(x=>{if(correct.has(x))s++;else w++;});
+  return {c:correct.size,s,w};
+};
+const scoreQ=(q,a)=>{
+  if(qWeight(q)===1)return a===q.ans?1:0;   // бір жауап және мәнмәтін: 1 / 0
+  const {c,s,w}=answerCounts(q,a);
+  return multiScore(c,s,w);
+};
+// ── Тарау қорытынды тесті: 40 тапсырма / 50 балл ──
+// 1–25 бір жауап (25) · 26–30 мәнмәтін (5) · 31–35 сәйкестендіру (10) · 36–40 бір/бірнеше жауап (10)
+const kindOf=q=>q.type==="match"?"match":isMultiQ(q)?"multi":(q.type==="context"||q.ctx)?"context":"single";
+const FINAL_PLAN=[
+  {k:"single",n:25,label:"1–25 · Бір дұрыс жауап",color:"#4F46E5"},
+  {k:"context",n:5,label:"26–30 · Мәнмәтін негізіндегі сұрақтар",color:"#0EA5E9"},
+  {k:"match",n:5,label:"31–35 · Сәйкестендіру",color:"#F59E0B"},
+  {k:"multi",n:5,label:"36–40 · Бір немесе бірнеше дұрыс жауап",color:"#22C55E"},
+];
+// Тараудың қосымша сұрақтары (мәнмәтін және көп жауапты) — src/finalExtra.js ішінен
+const extraFor=lid=>{
+  const x=FINAL_EXTRA[lid];if(!x)return [];const out=[];
+  const nid=(q,pfx,i)=>lid+"_"+(q.n?"q"+q.n:pfx+(i+1));
+  (x.single||[]).forEach((q,i)=>out.push({...q,id:nid(q,"s",i)}));
+  if(x.context)(x.context.qs||[]).forEach((q,i)=>out.push({...q,id:nid(q,"c",i),type:"context",ctx:x.context.text}));
+  (x.match||[]).forEach((q,i)=>out.push({...q,id:nid(q,"x",i),type:"match"}));
+  (x.multi||[]).forEach((q,i)=>out.push({...q,id:nid(q,"m",i),type:"multi",multi:true}));
+  return out;
+};
+const buildFinal=pool=>{
+  const num=q=>{const m=String(q.id).match(/_q(\d+)$/);return m?+m[1]:1e6;};
+  const by={single:[],context:[],match:[],multi:[]};
+  [...pool].sort((a,b)=>num(a)-num(b)).forEach(q=>by[kindOf(q)].push(q));
+  const groups=FINAL_PLAN.map(p=>{const items=by[p.k].splice(0,p.n);return {...p,items,real:items.length};});
+  // Мәнмәтін/көп жауапты сұрақтар жетпесе, орнына артық бір жауапты сұрақтар қойылады (50 балл толық болмайды)
+  groups.forEach(g=>{if(g.k!=="single")while(g.items.length<g.n&&by.single.length)g.items.push(by.single.shift());});
+  const qs=[],sections=[];
+  groups.forEach(g=>{
+    const pending=g.n-g.real;
+    sections.push({label:g.label+(pending>0&&g.k!=="single"?" (жаңа формат дайындалуда)":""),color:g.color,start:qs.length,count:g.items.length,pending});
+    qs.push(...g.items);
+  });
+  return {qs,sections};
 };
 
 // Тест таймері — өз алдына бөлек, тиек компонент. Секунд сайын тек ӨЗІ ғана
@@ -3726,6 +3789,7 @@ function SmartUBTInner(){
   const [loginForm,setLoginForm]=useState({email:"",password:""});
   const [showPw,setShowPw]=useState(false);
   const [loginErr,setLoginErr]=useState("");
+  const [regBusy,setRegBusy]=useState(false);
   const [loginBusy,setLoginBusy]=useState(false);
   const [adminTab,setAdminTab]=useState("dash");
   const [adminModal,setAdminModal]=useState(null);
@@ -3879,6 +3943,30 @@ function SmartUBTInner(){
     setUsers(p=>[...p,nu]);setUser(nu);sS("ubt3_user",nu);
     showToast(`Қош келдіңіз, ${nu.name}! 🎉`);setPage("home");
   };
+  // Контентті көшіруден қорғау: оқушыларға ғана (админ/куратор үшін өшірулі).
+  // Бұл кездейсоқ көшіруді қиындатады; толық қорғау емес — watermark скриншотты қадағалауға көмектеседі.
+  useEffect(()=>{
+    const staff=!!user&&(user.role==="admin"||user.role==="superadmin"||user.role==="curator");
+    if(staff)return;
+    const isField=(el)=>!!el&&(el.tagName==="INPUT"||el.tagName==="TEXTAREA"||el.isContentEditable);
+    const block=(e)=>{if(!isField(e.target))e.preventDefault();};
+    const onKey=(e)=>{
+      const k=(e.key||"").toLowerCase(),mod=e.ctrlKey||e.metaKey;
+      if(e.key==="F12"||(mod&&e.shiftKey&&["i","j","c"].includes(k))||(mod&&["s","p","u"].includes(k))||(mod&&["c","x","a"].includes(k)&&!isField(e.target)))e.preventDefault();
+    };
+    ["contextmenu","copy","cut","dragstart"].forEach(n=>document.addEventListener(n,block));
+    document.addEventListener("keydown",onKey);
+    const st=document.createElement("style");
+    st.id="ubt-protect";
+    st.textContent="body{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}input,textarea{-webkit-user-select:text;user-select:text}@media print{body{display:none!important}}";
+    document.head.appendChild(st);
+    return()=>{
+      ["contextmenu","copy","cut","dragstart"].forEach(n=>document.removeEventListener(n,block));
+      document.removeEventListener("keydown",onKey);
+      st.remove();
+    };
+  },[user?.id,user?.role]);
+
   const doLogin=async()=>{
     const fail=(m)=>{setLoginErr(m);showToast(m,"err");};
     setLoginErr("");
@@ -3966,12 +4054,14 @@ function SmartUBTInner(){
   const startLessonTest=(sid,lid,mode)=>{
     const countKey=mode==="hw"?"hwTestCount":"fixTestCount";
     const configCount=(content[countKey]||{})[lid]||(mode==="hw"?20:10);
-    const pool=(mode==="hw"?content.hwTests?.[lid]:content.lessonTests?.[lid])||[];
-    if(!pool.length)return showToast(mode==="hw"?"Үй жұмысы сұрақтары жоқ":"Бекіту сұрақтары жоқ","err");
     const isRev=String(lid).endsWith("_review");
-    const qs=isRev?ubtOrder(pool):[...pool].sort(()=>Math.random()-0.5);
-    const mins=mode==="hw"?30:(pool.length>=40?60:20);
-    setTest({sid,qs,curr:0,ans:{},time:mins*60,done:false,mode,lessonId:lid});
+    const useExtraOnly=isRev&&mode!=="hw"&&FINAL_EXTRA[lid]?.replace;
+    const pool=useExtraOnly?extraFor(lid):[...((mode==="hw"?content.hwTests?.[lid]:content.lessonTests?.[lid])||[]),...(isRev&&mode!=="hw"?extraFor(lid):[])];
+    if(!pool.length)return showToast(mode==="hw"?"Үй жұмысы сұрақтары жоқ":"Бекіту сұрақтары жоқ","err");
+    const fin=isRev&&mode!=="hw"?buildFinal(pool):null;
+    const qs=fin?fin.qs:[...pool].sort(()=>Math.random()-0.5);
+    const mins=mode==="hw"?30:(FINAL_EXTRA[lid]?.minutes||(pool.length>=40?60:20));
+    setTest({sid,qs,curr:0,ans:{},time:mins*60,done:false,mode,lessonId:lid,sections:fin?fin.sections:undefined,review:!!fin});
     setPage("test");
   };
   // Ескерту: секундтық санауыш енді бөлек TestTimer компонентінде — жалпы тест УИ-ін
@@ -3985,6 +4075,7 @@ function SmartUBTInner(){
       const m=String(q.id).match(/^chem_t(\d+)_q/);
       add(q,m?(topicById["chem_t"+m[1]]||lid):(lessonInfo[lid]?.lesson||lessonInfo[lid]?.topic||lid));
     })));
+    Object.keys(FINAL_EXTRA).forEach(lid=>extraFor(lid).forEach(q=>add(q,lessonInfo[lid]?.lesson||lid)));
     return idx;
   };
   const startQuestionsTest=(qs,sid,mode,mins)=>{
@@ -4189,17 +4280,18 @@ function SmartUBTInner(){
     };
 
     const handleFreeReg=async()=>{
-      if(!onboard.subjects.length)return showToast("Кем дегенде 1 пән таңдаңыз","err");
-      if(users.find(u=>u.email===onboard.email))return showToast("Бұл email тіркелген","err");
-      const plan=generateStudyPlan(onboard.subjects,null);
+      const subs=onboard.subjects.length?onboard.subjects:["chemistry"];
+      const email=(onboard.email||"").trim().toLowerCase();
+      if(users.find(u=>(u.email||"").toLowerCase()===email))return showToast("Бұл email тіркелген. «Кіру» батырмасын басыңыз","err");
+      const plan=generateStudyPlan(subs,null);
       const unlockCode=onboard.unlockCode||genCode();
-      const authRes=await sbAuthSignUp(onboard.email,onboard.password);
+      const authRes=await sbAuthSignUp(email,onboard.password);
       const nu={
-        id:Date.now(),name:onboard.name,email:onboard.email,
+        id:Date.now(),name:onboard.name.trim(),email,
         password:authRes.ok?"":onboard.password,
         authId:authRes.ok?authRes.authId:null,
-        phone:onboard.phone,grade:onboard.grade,role:"student",plan:"free",
-        profile:"custom",subjects:onboard.subjects,streak:0,xp:0,avatar:"🧑‍🎓",
+        phone:onboard.phone.trim(),grade:onboard.grade,role:"student",plan:"free",
+        profile:"custom",subjects:subs,streak:0,xp:0,avatar:"🧑‍🎓",
         unlockCode,
         createdAt:new Date().toLocaleDateString("kk-KZ"),
         school:"",city:"",progress:{},scores:[],homework:{},notes:{},studyPlan:plan,
@@ -4216,7 +4308,7 @@ function SmartUBTInner(){
         <div style={{...C.card,width:"100%",maxWidth:"min(500px,100%)",padding:"clamp(18px,5vw,32px)"}}>
 
           {/* Step indicator */}
-          <div style={{display:"flex",alignItems:"center",marginBottom:24}}>
+          <div style={{display:s===0?"none":"flex",alignItems:"center",marginBottom:24}}>
             {STEPS.map((st,i)=>(
               <div key={i} style={{display:"flex",alignItems:"center",flex:i<STEPS.length-1?1:"auto"}}>
                 <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
@@ -4232,31 +4324,35 @@ function SmartUBTInner(){
             ))}
           </div>
 
-          {/* ── STEP 0: Profile ── */}
+          {/* ── STEP 0: Тегін тіркелу (бір экран) ── */}
           {s===0&&(
             <div>
-              <h2 style={{fontWeight:900,fontSize:22,marginBottom:4,color:"#1E1B4B"}}>👤 Профиль жасау</h2>
-              <p style={{color:"#9CA3AF",fontSize:14,marginBottom:20}}>Тіркелу үшін ақпаратты толтырыңыз</p>
-              <input type="text" placeholder="Аты-жөніңіз *" value={onboard.name}
+              <h2 style={{fontWeight:900,fontSize:22,marginBottom:4,color:"#1E1B4B"}}>🎓 Тегін бастау</h2>
+              <p style={{color:"#9CA3AF",fontSize:14,marginBottom:20}}>Бір минутта тіркеліп, тегін сабақпен танысыңыз</p>
+              <input type="text" autoComplete="name" placeholder="Аты-жөніңіз *" value={onboard.name}
                 onChange={e=>setOnboard(p=>({...p,name:e.target.value}))} style={{...C.input,marginBottom:12}}/>
-              <input type="email" placeholder="Email *" value={onboard.email}
-                onChange={e=>setOnboard(p=>({...p,email:e.target.value}))} style={{...C.input,marginBottom:12}}/>
-              <input type="password" placeholder="Құпия сөз (мин. 6 таңба) *" value={onboard.password}
-                onChange={e=>setOnboard(p=>({...p,password:e.target.value}))} style={{...C.input,marginBottom:12}}/>
-              <input type="tel" placeholder="Телефон номері" value={onboard.phone}
+              <input type="tel" autoComplete="tel" inputMode="tel" placeholder="Телефон номері * (+7 7xx xxx xx xx)" value={onboard.phone}
                 onChange={e=>setOnboard(p=>({...p,phone:e.target.value}))} style={{...C.input,marginBottom:12}}/>
+              <input type="email" autoComplete="email" placeholder="Email *" value={onboard.email}
+                onChange={e=>setOnboard(p=>({...p,email:e.target.value}))} style={{...C.input,marginBottom:12}}/>
               <select value={onboard.grade} onChange={e=>setOnboard(p=>({...p,grade:e.target.value}))}
-                style={{...C.input,marginBottom:20}}>
+                style={{...C.input,marginBottom:12}}>
                 {[9,10,11].map(g=><option key={g} value={g}>{g}-сынып</option>)}
               </select>
-              <button style={{...C.btn,...C.pri,width:"100%",padding:14,fontSize:15}} onClick={()=>{
-                if(!onboard.name)return showToast("Атыңызды жазыңыз","err");
-                if(!onboard.email)return showToast("Email жазыңыз","err");
-                if(!onboard.password)return showToast("Құпия сөз жазыңыз","err");
-                if(onboard.password.length<6)return showToast("Құпия сөз кем дегенде 6 таңба","err");
-                setOnboard(p=>({...p,step:1}));
-              }}>Келесі →</button>
-              <div style={{textAlign:"center",marginTop:14,fontSize:14,color:"#9CA3AF"}}>
+              <input type="password" autoComplete="new-password" placeholder="Кіру үшін құпия сөз ойлап табыңыз (мин. 6 таңба) *" value={onboard.password}
+                onChange={e=>setOnboard(p=>({...p,password:e.target.value}))} style={{...C.input,marginBottom:20}}
+                onKeyDown={e=>e.key==="Enter"&&document.getElementById("ubt-free-reg-btn")?.click()}/>
+              <button id="ubt-free-reg-btn" disabled={regBusy} style={{...C.btn,...C.pri,width:"100%",padding:14,fontSize:15,opacity:regBusy?0.7:1}} onClick={async()=>{
+                if(regBusy)return;
+                if(!onboard.name.trim())return showToast("Аты-жөніңізді жазыңыз","err");
+                if((onboard.phone||"").replace(/\D/g,"").length<10)return showToast("Телефон нөмірін толық жазыңыз","err");
+                if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((onboard.email||"").trim()))return showToast("Email дұрыс емес","err");
+                if(!onboard.password||onboard.password.length<6)return showToast("Құпия сөз кем дегенде 6 таңба","err");
+                setRegBusy(true);
+                try{await handleFreeReg();}finally{setRegBusy(false);}
+              }}>{regBusy?"Тіркелуде...":"Тегін бастау →"}</button>
+              <p style={{textAlign:"center",fontSize:11,color:"#9CA3AF",marginTop:10,lineHeight:1.5}}>Тіркелу арқылы жаңалықтар мен ұсыныстар жіберуге келісесіз</p>
+              <div style={{textAlign:"center",marginTop:12,fontSize:14,color:"#9CA3AF"}}>
                 Аккаунтым бар? <span style={{color:"#4F46E5",cursor:"pointer",fontWeight:700}} onClick={()=>setPage("login")}>Кіру</span>
               </div>
             </div>
@@ -4656,6 +4752,10 @@ function SmartUBTInner(){
     const streak=user?.streak||0;
     const plan=PLANS.find(p=>p.id===user?.plan)||PLANS[0];
     const todayAnnouncements=content.announcements?.slice(0,3)||[];
+    const chemTopics=content.topics?.chemistry||[];
+    const totalLessons=chemTopics.reduce((a,t)=>a+(t.lessons?.length||0),0)||254;
+    const doneLessons=Object.keys(user?.progress||{}).length;
+    const prepPct=Math.min(100,Math.round((doneLessons/totalLessons)*100));
 
     return(
       <div>
@@ -4737,18 +4837,40 @@ function SmartUBTInner(){
             </div>
           );
         })()}
+        {/* Химия — басты карта (жалғыз пән) */}
+        <div onClick={()=>{setSubjectId("chemistry");setPage("lessons")}} style={{position:"relative",overflow:"hidden",borderRadius:24,padding:"24px 22px",marginBottom:16,cursor:"pointer",background:"linear-gradient(135deg,#047857 0%,#10B981 55%,#34D399 100%)",color:"#fff",boxShadow:"0 12px 32px rgba(16,185,129,0.35)"}}>
+          <div style={{position:"absolute",right:-40,top:-40,width:160,height:160,borderRadius:"50%",background:"rgba(255,255,255,0.12)"}}/>
+          <div style={{position:"absolute",right:30,bottom:-60,width:120,height:120,borderRadius:"50%",background:"rgba(255,255,255,0.08)"}}/>
+          <div style={{position:"relative",display:"flex",alignItems:"center",gap:16,marginBottom:18}}>
+            <div style={{width:76,height:76,borderRadius:22,background:"rgba(255,255,255,0.22)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:42,flexShrink:0}}>🧪</div>
+            <div style={{minWidth:0}}>
+              <div style={{fontWeight:900,fontSize:28,lineHeight:1.1}}>Химия</div>
+              <div style={{fontSize:13,opacity:0.9,marginTop:4}}>{chemTopics.length||31} тарау • {totalLessons} сабақ</div>
+            </div>
+          </div>
+          <div style={{position:"relative",display:"flex",justifyContent:"space-between",fontSize:13,fontWeight:700,marginBottom:6}}>
+            <span>Прогресс: {doneLessons}/{totalLessons} сабақ</span><span>{prepPct}%</span>
+          </div>
+          <div style={{position:"relative",background:"rgba(255,255,255,0.28)",borderRadius:99,height:10,marginBottom:18}}>
+            <div style={{background:"#fff",height:10,borderRadius:99,width:`${prepPct}%`,transition:"width 0.8s"}}/>
+          </div>
+          <div style={{position:"relative",background:"#fff",color:"#047857",borderRadius:14,padding:"13px 0",textAlign:"center",fontWeight:900,fontSize:15}}>
+            {doneLessons>0?"Оқуды жалғастыру →":"Оқуды бастау →"}
+          </div>
+        </div>
+
         {/* Quick stats */}
         <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:12,marginBottom:20}}>
           {[
-            {l:"Тесттер",v:myResults.length,i:"📝",c:"#4F46E5"},
-            {l:"Орташа балл",v:avgScore+"%",i:"🎯",c:"#EC4899"},
-            {l:"Дайындық",v:Math.min(100,Math.round((Object.keys(user?.progress||{}).length/224)*100))+"%",i:"📊",c:"#F59E0B"},
-            {l:"Сабақ бітірілді",v:Object.keys(user?.progress||{}).length,i:"✅",c:"#22C55E"},
-          ].map((s,i)=>(
-            <div key={i} style={{...C.card,padding:16,textAlign:"center"}}>
-              <div style={{fontSize:26}}>{s.i}</div>
-              <div style={{fontSize:22,fontWeight:900,color:s.c}}>{s.v}</div>
-              <div style={{fontSize:11,color:"#9CA3AF"}}>{s.l}</div>
+            {l:"Тесттер",v:myResults.length,i:"📝",g:"linear-gradient(135deg,#6366F1,#8B5CF6)"},
+            {l:"Орташа балл",v:avgScore+"%",i:"🎯",g:"linear-gradient(135deg,#EC4899,#F43F5E)"},
+            {l:"Дайындық",v:prepPct+"%",i:"📊",g:"linear-gradient(135deg,#F59E0B,#F97316)"},
+            {l:"Сабақ бітірілді",v:doneLessons,i:"✅",g:"linear-gradient(135deg,#10B981,#14B8A6)"},
+          ].map((st,i)=>(
+            <div key={i} style={{background:st.g,borderRadius:18,padding:"16px 14px",textAlign:"center",color:"#fff",boxShadow:"0 6px 18px rgba(0,0,0,0.12)"}}>
+              <div style={{fontSize:26}}>{st.i}</div>
+              <div style={{fontSize:26,fontWeight:900,lineHeight:1.2}}>{st.v}</div>
+              <div style={{fontSize:12,fontWeight:600,opacity:0.92}}>{st.l}</div>
             </div>
           ))}
         </div>
@@ -4772,23 +4894,11 @@ function SmartUBTInner(){
           <div style={{fontSize:44}}>🎓</div>
           <div style={{flex:1}}>
             <div style={{fontWeight:900,fontSize:17,color:"#fff"}}>ҰБТ Симуляциясы</div>
-            <div style={{fontSize:13,color:"rgba(255,255,255,0.7)",marginTop:3}}>Нақты ҰБТ форматы — 80 сұрақ, <b style={{color:"#FCD34D"}}>140 балл</b>, 240 минут</div>
+            <div style={{fontSize:13,color:"rgba(255,255,255,0.7)",marginTop:3}}>Химия — 40 сұрақ, <b style={{color:"#FCD34D"}}>50 балл</b>, 240 минут</div>
           </div>
           <div style={{background:"linear-gradient(135deg,#F59E0B,#EF4444)",borderRadius:12,padding:"10px 18px",fontWeight:900,fontSize:14,color:"#fff",whiteSpace:"nowrap",boxShadow:"0 4px 12px rgba(239,68,68,0.4)"}}>
             Бастау →
           </div>
-        </div>
-
-        <div onClick={()=>{setSubjectId("chemistry");setPage("lessons")}} style={{...C.card,padding:20,marginBottom:16,display:"flex",alignItems:"center",gap:16,cursor:"pointer",background:"linear-gradient(135deg,#E8F5E9,#F0FFF4)",border:"1px solid #86EFAC"}}>
-          <div style={{width:56,height:56,borderRadius:16,background:"#fff",display:"flex",alignItems:"center",justifyContent:"center",fontSize:30,flexShrink:0,boxShadow:"0 2px 8px rgba(0,0,0,0.06)"}}>🧪</div>
-          <div style={{flex:1,minWidth:0}}>
-            <div style={{fontWeight:800,fontSize:16,color:"#1E1B4B"}}>Химия</div>
-            <div style={{background:"#DCFCE7",borderRadius:99,height:6,marginTop:6}}>
-              <div style={{background:"#22C55E",height:6,borderRadius:99,width:`${Math.min(100,Math.round((Object.keys(user?.progress||{}).length/224)*100))}%`,transition:"width 0.8s"}}/>
-            </div>
-          </div>
-          <div style={{fontWeight:900,fontSize:20,color:"#22C55E",flexShrink:0}}>{Math.min(100,Math.round((Object.keys(user?.progress||{}).length/224)*100))}%</div>
-          <span style={{color:"#22C55E",fontSize:18,flexShrink:0}}>→</span>
         </div>
 
         {todayAnnouncements.length>0&&(
@@ -4861,18 +4971,12 @@ function SmartUBTInner(){
   ════════════════════════════════════════════════════════ */
   const PageSubjects=()=>{
     const filter=subjectFilter; const setFilter=setSubjectFilter;
-    const filtered=filter==="mine"?(user?.subjects||[]).map(id=>SUBJECTS.find(s=>s.id===id)).filter(Boolean):filter==="mandatory"?SUBJECTS.filter(s=>s.tag==="Міндетті"):filter==="profile"?SUBJECTS.filter(s=>s.tag==="Бейінді"):SUBJECTS;
+    const filtered=SUBJECTS; /* жалғыз пән — химия */
+    const _unusedFilter=filter==="mine"?(user?.subjects||[]).map(id=>SUBJECTS.find(s=>s.id===id)).filter(Boolean):filter==="mandatory"?SUBJECTS.filter(s=>s.tag==="Міндетті"):filter==="profile"?SUBJECTS.filter(s=>s.tag==="Бейінді"):SUBJECTS;
     return(
       <div>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
-          <h2 style={{fontWeight:900,fontSize:22,color:"#1E1B4B"}}>📚 Барлық пәндер</h2>
-          <div style={{display:"flex",gap:6}}>
-            {[["all","Барлығы"],["mine","Менің"],["mandatory","Міндетті"],["profile","Бейінді"]].map(([v,l])=>(
-              <button key={v} onClick={()=>setFilter(v)} style={{...C.btn,padding:"7px 14px",fontSize:12,background:filter===v?"linear-gradient(135deg,#4F46E5,#7C3AED)":"#EEF0FF",color:filter===v?"#fff":"#6B7280"}}>{l}</button>
-            ))}
-          </div>
-        </div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(190px,1fr))",gap:14}}>
+        <h2 style={{fontWeight:900,fontSize:24,color:"#1E1B4B",marginBottom:16}}>🧪 Химия</h2>
+        <div style={{display:"grid",gridTemplateColumns:"1fr",gap:14}}>
           {filtered.map(s=>{
             const sRes=myResults.filter(r=>r.sid===s.id);
             const sAvg=sRes.length?Math.round(sRes.reduce((a,b)=>a+b.score,0)/sRes.length):0;
@@ -4882,15 +4986,14 @@ function SmartUBTInner(){
                 onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-4px)";e.currentTarget.style.boxShadow=`0 8px 28px ${s.color}25`}}
                 onMouseLeave={e=>{e.currentTarget.style.transform="";e.currentTarget.style.boxShadow="0 2px 20px rgba(79,70,229,0.08)"}}>
                 <div style={{height:5,background:s.color}}/>
-                <div style={{padding:16}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
-                    <div style={{fontSize:34}}>{s.icon}</div>
+                <div style={{padding:24}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
+                    <div style={{fontSize:56}}>{s.icon}</div>
                     <div style={{display:"flex",flexDirection:"column",gap:4,alignItems:"flex-end"}}>
-                      <span style={{...C.tag,background:s.bg,color:s.color,fontSize:9}}>{s.tag}</span>
-                      {isMine&&<span style={{...C.tag,background:"#F0FFF4",color:"#22C55E",fontSize:9}}>✓ Менің</span>}
+
                     </div>
                   </div>
-                  <div style={{fontWeight:800,fontSize:13,color:"#1E1B4B",marginBottom:8}}>{s.name}</div>
+                  <div style={{fontWeight:900,fontSize:24,color:"#1E1B4B",marginBottom:8}}>{s.name}</div>
                   {sAvg>0&&<div style={{marginBottom:8}}>
                     <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
                       <span style={{fontSize:10,color:"#9CA3AF"}}>Орт. балл</span>
@@ -4900,10 +5003,10 @@ function SmartUBTInner(){
                       <div style={{background:s.color,height:5,borderRadius:99,width:`${sAvg}%`}}/>
                     </div>
                   </div>}
-                  <div style={{fontSize:11,color:"#9CA3AF",marginBottom:10}}>{(content.questions[s.id]||[]).length} сұрақ • {(content.topics[s.id]||[]).length} тарау</div>
+                  <div style={{fontSize:14,color:"#6B7280",marginBottom:14}}>{(content.topics[s.id]||[]).length} тарау • {(content.topics[s.id]||[]).reduce((a,t)=>a+(t.lessons?.length||0),0)} сабақ</div>
                   <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(min(140px,44%),1fr))",gap:6}}>
-                    <button onClick={()=>{setSubjectId(s.id);setPage("lessons")}} style={{...C.btn,...C.sec,padding:"7px 0",fontSize:11}}>📹 Сабақ</button>
-                    <button onClick={()=>startTest(s.id)} style={{...C.btn,...C.pri,padding:"7px 0",fontSize:11}}>✏️ Тест</button>
+                    <button onClick={()=>{setSubjectId(s.id);setPage("lessons")}} style={{...C.btn,...C.sec,padding:"14px 0",fontSize:15,fontWeight:800}}>📹 Сабақтар</button>
+                    <button onClick={()=>startTest(s.id)} style={{...C.btn,...C.pri,padding:"14px 0",fontSize:15,fontWeight:800}}>✏️ Тест</button>
                   </div>
                 </div>
               </div>
@@ -5214,9 +5317,9 @@ function SmartUBTInner(){
                     ):(
                       <div>
                         <button style={{...C.btn,...C.sec,padding:"6px 12px",fontSize:12,marginBottom:14}} onClick={()=>setGameMode(null)}>← Ойындарға қайту</button>
-                        {gameMode==="cards"&&<FlashcardsGame questions={fixQs} onDone={()=>{}}/>}
+                        {gameMode==="cards"&&<FlashcardsGame questions={fixQs} onDone={()=>{}} C={C}/>}
                         {gameMode==="match"&&<MatchingCardGame questions={fixQs} onDone={()=>{}}/>}
-                        {gameMode==="tf"&&<TrueFalseGame questions={fixQs} onDone={()=>setGameMode(null)}/>}
+                        {gameMode==="tf"&&<TrueFalseGame questions={fixQs} onDone={()=>setGameMode(null)} C={C}/>}
                       </div>
                     )}
                   </div>
@@ -5531,7 +5634,7 @@ function SmartUBTInner(){
       <div style={{maxWidth:"min(700px,100%)",margin:"0 auto"}}>
         <div style={{...C.card,marginBottom:14,padding:"14px 20px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <div>
-            {test.mode==="ubt"&&test.sections&&(()=>{
+            {(test.mode==="ubt"||test.review)&&test.sections&&(()=>{
                 const sec=test.sections.find(s=>test.curr>=s.start&&test.curr<s.start+s.count);
                 return sec?<div style={{fontWeight:800,fontSize:13,color:sec.color||"#4F46E5",marginBottom:2}}>{sec.label} — {test.curr-sec.start+1}/{sec.count}</div>:null;
               })()}
@@ -5548,11 +5651,42 @@ function SmartUBTInner(){
           <div style={{background:"linear-gradient(90deg,#4F46E5,#7C3AED)",height:8,borderRadius:99,width:`${(curr/qs.length)*100}%`,transition:"width 0.4s"}}/>
         </div>
         <div style={{...C.card,marginBottom:12,padding:20}}>
+          {q.ctx&&<div style={{background:"#F0F9FF",border:"1px solid #BAE6FD",borderRadius:12,padding:"12px 14px",marginBottom:12,fontSize:14,lineHeight:1.7,color:"#0C4A6E"}}><div style={{fontWeight:800,fontSize:12,marginBottom:4,color:"#0284C7"}}>📖 Мәтінді оқып, сұраққа жауап беріңіз</div>{q.ctx}</div>}
           <div style={{fontSize:17,fontWeight:700,lineHeight:1.65,color:"#1E1B4B"}}>{q.q}</div>
           {q.topic&&<div style={{marginTop:6,...C.tag,...C.sec,fontSize:10}}>{q.topic}</div>}
         </div>
         {/* ── ANSWER OPTIONS (standard or matching) ── */}
-        {q.type==="match"?(
+        {q.type==="match"&&q.rights?(
+          // Сәйкестендіру: әр жолға дұрыс әріпті таңдау (жауаптар қайталануы мүмкін)
+          <div style={{marginBottom:20}}>
+            <div style={{fontSize:13,color:"#6B7280",marginBottom:10,fontWeight:600}}>Әр жолға дұрыс жауап әрпін таңдаңыз:</div>
+            <div style={{background:"#F9FAFE",border:"1px solid #E5E7EB",borderRadius:12,padding:"10px 14px",marginBottom:12}}>
+              {q.rights.map((r,ri)=>(
+                <div key={ri} style={{fontSize:13.5,lineHeight:1.55,color:"#1E1B4B",marginBottom:ri<q.rights.length-1?4:0}}>
+                  <b style={{color:"#4F46E5",marginRight:6}}>{String.fromCharCode(65+ri)}</b>{r}
+                </div>
+              ))}
+            </div>
+            {(q.pairs||[]).map((p,pi)=>{
+              const cur=(ans[curr]||{})[pi];
+              const selR=cur===undefined||cur===null?-1:q.rights.indexOf(q.pairs[cur]?.right);
+              return(
+                <div key={pi} style={{padding:"10px 12px",borderRadius:12,background:"#EEF0FF",marginBottom:8}}>
+                  <div style={{fontWeight:700,fontSize:14,color:"#1E1B4B",marginBottom:8}}>{pi+1}. {p.left}</div>
+                  <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                    {q.rights.map((r,ri)=>(
+                      <button key={ri} aria-label={"Жауап "+String.fromCharCode(65+ri)}
+                        onClick={()=>setTest(pt=>({...pt,ans:{...pt.ans,[curr]:{...(pt.ans[curr]||{}),[pi]:q.pairs.findIndex(x=>x.right===r)}}}))}
+                        style={{minWidth:44,height:40,borderRadius:10,border:selR===ri?"2px solid #4F46E5":"1.5px solid #D1D5DB",background:selR===ri?"#4F46E5":"#fff",color:selR===ri?"#fff":"#1E1B4B",fontWeight:800,fontSize:14,cursor:"pointer",padding:"0 10px"}}>
+                        {String.fromCharCode(65+ri)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ):q.type==="match"?(
           // Сәйкестендіру (Matching) — ҰБТ форматы
           <div style={{marginBottom:20}}>
             <div style={{fontSize:13,color:"#6B7280",marginBottom:10,fontWeight:600}}>Сол жақтан оң жаққа сәйкестендіріңіз:</div>
@@ -6182,7 +6316,7 @@ function SmartUBTInner(){
 
         {/* Profile subject (жалғыз — химия) */}
         <div style={{marginBottom:24}}>
-          <div style={{fontWeight:800,fontSize:16,color:"#1E1B4B",marginBottom:12}}>🎯 Бейінді пән</div>
+          <div style={{fontWeight:800,fontSize:16,color:"#1E1B4B",marginBottom:12}}>🧪 Тест пәні</div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(min(160px,45%),1fr))",gap:10}}>
             {PROFILE_SUBJECTS.map(s=>{
               const varCount=(content.variants?.[s.id]||[]).length;
@@ -6215,13 +6349,12 @@ function SmartUBTInner(){
         </div>
 
         {/* Start button */}
-        <button onClick={startUBT} disabled={profSubs.length<1}
+        <button onClick={startUBT}
           style={{...C.btn,...C.pri,width:"100%",padding:"16px",fontSize:17,fontWeight:900,
-            opacity:profSubs.length<2?0.5:1,cursor:profSubs.length<2?"not-allowed":"pointer",
             background:"linear-gradient(135deg,#4F46E5,#7C3AED)",borderRadius:16,
-            boxShadow:profSubs.length===2?"0 8px 24px rgba(79,70,229,0.4)":"none",
+            boxShadow:"0 8px 24px rgba(79,70,229,0.4)",
           }}>
-          {profSubs.length<2?`${2-profSubs.length} профиль пән таңдаңыз`:`🎓 ҰБТ бастау • ${totalPts} балл →`}
+          🎓 Химия тестін бастау • {totalPts} балл →
         </button>
       </div>
     );
@@ -7332,11 +7465,17 @@ function SmartUBTInner(){
     );
   };
 
-    if(page==="welcome")return PageWelcome();
-  if(page==="register")return PageRegister();
-  if(page==="login")return PageLogin();
+    const toastNode=toast?(
+      <div style={{position:"fixed",bottom:24,right:24,padding:"14px 22px",borderRadius:14,fontWeight:700,fontSize:14,zIndex:999,boxShadow:"0 8px 32px rgba(0,0,0,0.12)",background:toast.type==="err"?'#FEF2F2':'#F0FFF4',color:toast.type==="err"?'#EF4444':'#22C55E',border:`2px solid ${toast.type==="err"?"#FCA5A5":"#86EFAC"}`,animation:"fadeUp 0.3s ease"}}>
+          {toast.msg}
+        </div>
+    ):null;
 
-  if(!user)return PageWelcome();
+  // Welcome / тіркелу / кіру беттерінде де хабарлама (toast) көрінуі үшін
+  if(page==="welcome"||page==="register"||page==="login"||!user){
+    const early=page==="register"?PageRegister():page==="login"?PageLogin():PageWelcome();
+    return <>{early}{toastNode}</>;
+  }
 
   const pageContent=()=>{
     if(page==="home")return PageHome();
@@ -7395,11 +7534,13 @@ function SmartUBTInner(){
         SUBJECTS={SUBJECTS}
         C={C}
       />}
-      {toast&&(
-        <div style={{position:"fixed",bottom:24,right:24,padding:"14px 22px",borderRadius:14,fontWeight:700,fontSize:14,zIndex:999,boxShadow:"0 8px 32px rgba(0,0,0,0.12)",background:toast.type==="err"?'#FEF2F2':'#F0FFF4',color:toast.type==="err"?'#EF4444':'#22C55E',border:`2px solid ${toast.type==="err"?"#FCA5A5":"#86EFAC"}`,animation:"fadeUp 0.3s ease"}}>
-          {toast.msg}
-        </div>
-      )}
+      {user&&!(user.role==="admin"||user.role==="superadmin"||user.role==="curator")&&(()=>{
+        const esc=(x)=>String(x||"").replace(/[&<>"']/g,"");
+        const label=esc(user.name)+" • "+esc(user.phone||user.email);
+        const svg='<svg xmlns="http://www.w3.org/2000/svg" width="340" height="220"><text x="20" y="130" transform="rotate(-24 170 110)" font-family="sans-serif" font-size="15" font-weight="700" fill="rgba(90,90,120,0.075)">'+label+'</text></svg>';
+        return <div aria-hidden="true" style={{position:"fixed",inset:0,zIndex:998,pointerEvents:"none",backgroundImage:'url("data:image/svg+xml;utf8,'+encodeURIComponent(svg)+'")'}}/>;
+      })()}
+      {toastNode}
       {/* Admin/Curator quick-switch floating button */}
       {(user?.role==="admin"||user?.role==="superadmin"||user?.role==="curator")&&page!=="admin"&&(
         <button onClick={()=>setPage("admin")} style={{
