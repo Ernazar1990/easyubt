@@ -1,3 +1,11 @@
 node_modules
 dist
 .vercel
+
+# Құпия баптаулар
+.env
+.env.local
+.env.*.local
+
+# Серверге жүктелетін мазмұн (жауаптарымен) — GitHub-қа салмаңыз, өз компьютеріңізде сақтаңыз
+server_data/
