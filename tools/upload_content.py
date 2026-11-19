@@ -62,4 +62,18 @@ for f in sorted(glob.glob(os.path.join(ROOT, "server_data/theory/ch*.json")), ke
 sent = 0
 for b in batches(rows, max_bytes=800_000, max_rows=20): sent += post("theory_bank", b, "lesson_id")
 print(f"Теория: {len(rows)} сабақ {'тексерілді' if DRY else 'жүктелді'} ({sent // 1048576} МБ)")
+# 3) Сабақ мазмұны (бекіту, үй жұмысы): тек бос болса жүктейді — админ жариялаған мазмұнды ЕШҚАШАН өшірмейді
+seed_path = os.path.join(ROOT, "server_data/content_seed.json")
+if os.path.exists(seed_path):
+    seed = json.load(open(seed_path, encoding="utf-8"))
+    exists = False
+    if not DRY:
+        req = urllib.request.Request(f"{URL}/rest/v1/app_content?key=eq.main&select=key", headers={"apikey": KEY, "Authorization": "Bearer " + KEY})
+        try: exists = len(json.loads(urllib.request.urlopen(req, timeout=60).read())) > 0
+        except Exception as e: sys.exit(f"app_content оқу қатесі: {e} (migration-phase-e-content.sql іске қосылған ба?)")
+    if exists and "--force-seed" not in sys.argv:
+        print("Сабақ мазмұны: серверде бұрыннан бар — тиіспедім (қайта жазу үшін --force-seed).")
+    else:
+        post("app_content", [{"key": "main", "data": seed}], "key")
+        print(f"Сабақ мазмұны: бекіту {len(seed.get('lessonTests', {}))} сабақ, үй жұмысы {len(seed.get('hwTests', {}))} сабақ {'тексерілді' if DRY else 'жүктелді'}")
 print("Дайын." if not DRY else "Dry-run аяқталды.")
