@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import * as mammoth from "mammoth";
 import { FINAL_EXTRA } from "./finalExtra.js";
+import { answerFromKnowledgeBase } from "./knowledgeAssistant.js";
 
 /* ════ RECHARTS ════ */
 /* Recharts CDN жүктеу алынып тасталды — Vite React-ты window.React етіп шығармайтындықтан, бұл UMD скрипт ешқашан дұрыс жұмыс істей алмайды (Layer.tsx: forwardRef қатесі). Статистика беті график компоненттерінің жоқтығын өзі тексеріп, оларсыз көрсетеді. */
@@ -90,9 +91,9 @@ const PACKAGES = [
 ];
 
 const PLANS = [
-  { id:"free",    name:"Тегін",    price:0,     color:"#6B7280", features:["5 тест/күн","1-сабақ ашық (демо)","AI: 10 сұрақ/күн"],      limit:5 },
-  { id:"basic",   name:"Базалық",  price:2990,  color:"#6366F1", features:["Шексіз тест","Барлық видео","AI: 50 сұрақ/күн","PDF"],      limit:50, popular:false },
-  { id:"premium", name:"Премиум",  price:4990,  color:"#F59E0B", features:["Барлық функция","AI шексіз","Куратор","Сертификат"],         limit:999, popular:true },
+  { id:"free",    name:"Тегін",    price:0,     color:"#6B7280", features:["5 тест/күн","1-сабақ ашық (демо)","Дерекқор бойынша көмекші"],      limit:5 },
+  { id:"basic",   name:"Базалық",  price:2990,  color:"#6366F1", features:["Шексіз тест","Барлық видео","Дерекқор бойынша көмекші","PDF"],      limit:50, popular:false },
+  { id:"premium", name:"Премиум",  price:4990,  color:"#F59E0B", features:["Барлық функция","Дерекқор бойынша көмекші","Куратор","Сертификат"],         limit:999, popular:true },
   { id:"package", name:"Пакет",    price:0,     color:"#EC4899", features:["Таңдалған пәндер","Апталық жоспар","Толық модуль"],         limit:999 },
 ];
 
@@ -4136,20 +4137,22 @@ function SmartUBTInner(){
     setPage("result");
   };
 
-  /* ── AI ── */
+  /* ── Дерекқорға сүйенетін, API кілтін/ақылы токенді қажет етпейтін оқу көмекшісі ── */
   const askAI=async()=>{
-    if(!aiInput.trim())return;
-    const msg=aiInput;setAiInput("");
-    setAiMsgs(p=>[...p,{role:"user",text:msg}]);setAiLoad(true);
+    const msg=aiInput.trim();
+    if(!msg||aiLoad)return;
+    setAiInput("");
+    setAiMsgs(p=>[...p,{role:"user",text:msg}]);
+    setAiLoad(true);
+    // Yield one frame so the interface can show its loading state before local search.
+    await new Promise(resolve=>setTimeout(resolve,0));
     try{
-      const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,
-          system:"Сен Smart UBT қосымшасының AI мұғалімісің. Қазақстандық ҰБТ-ға дайындалатын оқушыларға жәрдем бересің. БАРЛЫҚ жауапты қазақ тілінде жаз. Мектеп пәндерін түсіндір, формулалар мен мысалдар келтір. Жауабыңды нақты, оқушыға түсінікті жаз.",
-          messages:[...aiMsgs.map(m=>({role:m.role,content:m.text})),{role:"user",content:msg}]})});
-      const d=await res.json();
-      setAiMsgs(p=>[...p,{role:"assistant",text:d.content?.[0]?.text||"Қате орын алды"}]);
-    }catch{setAiMsgs(p=>[...p,{role:"assistant",text:"API қатесі. Желі байланысын тексеріңіз."}]);}
-    setAiLoad(false);
+      const answer=answerFromKnowledgeBase(msg,{topics:content.topics||TOPICS,content});
+      setAiMsgs(p=>[...p,{role:"assistant",text:answer}]);
+    }catch(error){
+      console.error("Knowledge assistant error:",error);
+      setAiMsgs(p=>[...p,{role:"assistant",text:"Оқу базасын қазір іздей алмадым. Сабақтар бөлімінен тақырыпты ашып көріңіз."}]);
+    }finally{setAiLoad(false);}
   };
 
   const myResults=results.filter(r=>r.userId===user?.id);
@@ -4202,7 +4205,7 @@ function SmartUBTInner(){
         <h1 style={{fontSize:42,fontWeight:900,color:"#fff",letterSpacing:-1.5,marginBottom:16,lineHeight:1.1}}>Smart UBT App</h1>
         <p style={{color:"rgba(255,255,255,0.75)",fontSize:18,marginBottom:12,lineHeight:1.6}}>Қазақстанның ең заманауи ҰБТ дайындық платформасы</p>
         <div style={{display:"flex",gap:10,justifyContent:"center",flexWrap:"wrap",marginBottom:36}}>
-          {["🤖 AI Мұғалім","📹 Видео сабақтар","✏️ ҰБТ тесттер","📊 Прогресс бақылау"].map(f=>(
+          {["📚 Оқу көмекшісі","📹 Видео сабақтар","✏️ ҰБТ тесттер","📊 Прогресс бақылау"].map(f=>(
             <span key={f} style={{background:"rgba(255,255,255,0.15)",color:"#fff",borderRadius:99,padding:"6px 14px",fontSize:13,fontWeight:600,backdropFilter:"blur(8px)"}}>{f}</span>
           ))}
         </div>
@@ -4881,7 +4884,7 @@ function SmartUBTInner(){
             {i:"🎴",l:"Флэшкарта",p:"flashcard",bg:"linear-gradient(135deg,#7C3AED,#9333EA)"},
             {i:"🏆",l:"Рейтинг",p:"leaderboard",bg:"linear-gradient(135deg,#F59E0B,#D97706)"},
             {i:"📅",l:"Жоспар",p:"plan",bg:"linear-gradient(135deg,#0EA5E9,#0284C7)"},
-            {i:"🤖",l:"AI Мұғалім",p:"ai",bg:"linear-gradient(135deg,#22C55E,#16A34A)"},
+            {i:"🤖",l:"Оқу көмекшісі",p:"ai",bg:"linear-gradient(135deg,#22C55E,#16A34A)"},
           ].map(({i,l,p,bg})=>(
             <div key={p} onClick={()=>setPage(p)} style={{background:bg,borderRadius:14,padding:"12px 8px",textAlign:"center",cursor:"pointer",boxShadow:"0 4px 12px rgba(0,0,0,0.1)"}}>
               <div style={{fontSize:22,marginBottom:4}}>{i}</div>
@@ -6146,15 +6149,15 @@ function SmartUBTInner(){
   ════════════════════════════════════════════════════════ */
   const PageAI=()=>(
     <div style={{maxWidth:720,margin:"0 auto"}}>
-      <h2 style={{fontWeight:900,fontSize:22,marginBottom:4,color:"#1E1B4B"}}>🤖 AI Мұғалім</h2>
-      <p style={{color:"#9CA3AF",marginBottom:16}}>Кез-келген ҰБТ сұрағын қазақша сұраңыз</p>
+      <h2 style={{fontWeight:900,fontSize:22,marginBottom:4,color:"#1E1B4B"}}>📚 Оқу көмекшісі</h2>
+      <p style={{color:"#9CA3AF",marginBottom:16}}>Курстағы сабақтар мен тесттерден жауап іздеңіз</p>
       <div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap"}}>
-        {["Математика интегралын түсіндір","Фотосинтез дегеніміз не?","Ньютон заңдары","Алаш Орда тарихы","log₂(16) = ?"].map(q=>(
+        {["Атомның құрылысы","Моль санын қалай табады?","Химиялық байланыс түрлері","Тотығу-тотықсыздану реакциясы","Қышқыл мен негіз деген не?"].map(q=>(
           <button key={q} onClick={()=>setAiInput(q)} style={{...C.btn,...C.sec,padding:"6px 12px",fontSize:12}}>{q}</button>
         ))}
       </div>
       <div ref={aiRef} style={{...C.card,height:420,overflowY:"auto",marginBottom:14,padding:16,display:"flex",flexDirection:"column",gap:12}}>
-        {aiMsgs.length===0&&<div style={{margin:"auto",textAlign:"center",color:"#9CA3AF"}}><div style={{fontSize:52,marginBottom:8}}>🤖</div><div style={{fontWeight:700,marginBottom:4}}>AI Мұғалімге қош келдіңіз!</div><div style={{fontSize:14}}>Кез-келген сұрақты қазақша сұраңыз</div></div>}
+        {aiMsgs.length===0&&<div style={{margin:"auto",textAlign:"center",color:"#9CA3AF"}}><div style={{fontSize:52,marginBottom:8}}>🤖</div><div style={{fontWeight:700,marginBottom:4}}>AI Мұғалімге қош келдіңіз!</div><div style={{fontSize:14}}>Курстағы сұрақтарға дереккөзбен жауап алыңыз</div></div>}
         {aiMsgs.map((m,i)=>(
           <div key={i} style={{display:"flex",justifyContent:m.role==="user"?"flex-end":"flex-start"}}>
             <div style={{maxWidth:"82%",padding:"12px 16px",borderRadius:m.role==="user"?"18px 18px 4px 18px":"4px 18px 18px 18px",background:m.role==="user"?"linear-gradient(135deg,#4F46E5,#7C3AED)":"#fff",color:m.role==="user"?"#fff":"#1E1B4B",fontSize:14,lineHeight:1.7,boxShadow:"0 2px 8px rgba(0,0,0,0.07)",border:m.role==="assistant"?"1px solid #EEF0FF":"none",whiteSpace:"pre-wrap"}}>
