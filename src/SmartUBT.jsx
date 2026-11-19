@@ -5072,7 +5072,7 @@ function SmartUBTInner(){
                   <div key={ls.id}
                     onClick={()=>{
                       if(!unlocked){setAdminModal({type:"payment"});return;}
-                      setTopicId(tp.id);setLessonId(ls.id);setLessonTab(ls.id.endsWith("_review")?"bekitu":"video");setGameMode(null);setPage("lesson");
+                      setTopicId(tp.id);setLessonId(ls.id);setLessonTab(ls.id.endsWith("_review")?"bekitu":(ls.videoUrl?"video":"bekitu"));setGameMode(null);setPage("lesson");
                     }}
                     style={{background:done?"#F0FFF4":unlocked?"#FAFAFE":"#F5F5F5",borderRadius:14,padding:14,
                       cursor:unlocked?"pointer":"not-allowed",
@@ -5131,7 +5131,8 @@ function SmartUBTInner(){
     /* ── progress helpers ── */
     const lp=user?.lessonProgress?.[lessonId]||{};
     // Unlock chain: video→bekitu→konspekt→jazba→hw→error
-    const videoOk  = !!lp.videoWatched;
+    const hasVideo = !!lesson.videoUrl;
+    const videoOk  = !hasVideo || !!lp.videoWatched;
     const bekituOk = (lp.bekituScore||0)>=80;
     const konspektOk= !!lp.konspektDone;
     const jazbaOk  = !!lp.jazbaDone || (content.writingTasks?.[lessonId]||[]).length===0;
@@ -5156,7 +5157,7 @@ function SmartUBTInner(){
       {id:"bekitu",  icon:"📝", label:"Тарау тесті",  unlocked:true,     done:bekituOk},
       {id:"error",   icon:"🔄", label:"Қатемен жұмыс",unlocked:bekituOk, done:bekituOk&&errHasContent},
     ]:[
-      {id:"video",   icon:"📹", label:"Видео",       unlocked:true,           done:videoOk},
+      ...(hasVideo?[{id:"video",icon:"📹",label:"Видео",unlocked:true,done:!!lp.videoWatched}]:[]),
       {id:"bekitu",  icon:"✅", label:"Бекіту",      unlocked:videoOk,        done:bekituOk},
       {id:"konspekt",icon:"📄", label:"Конспект",    unlocked:bekituOk,       done:konspektOk},
       {id:"jazba",   icon:"✏️", label:"Жазба",       unlocked:konspektOk,     done:jazbaOk},
@@ -6002,7 +6003,7 @@ function SmartUBTInner(){
                             setSubjectId(l.sid);setTopicId(null);
                             const allTops=content.topics[l.sid]||[];
                             const tp=allTops.find(t=>t.lessons.some(ls=>ls.id===l.lessonId));
-                            if(tp){setTopicId(tp.id);setLessonId(l.lessonId);setLessonTab(l.lessonId.endsWith("_review")?"bekitu":"video");setGameMode(null);setPage("lesson");}
+                            if(tp){const matchingLesson=tp.lessons.find(ls=>ls.id===l.lessonId);setTopicId(tp.id);setLessonId(l.lessonId);setLessonTab(l.lessonId.endsWith("_review")?"bekitu":(matchingLesson?.videoUrl?"video":"bekitu"));setGameMode(null);setPage("lesson");}
                             else{setPage("lessons");}
                           }}>
                           <span style={{fontSize:16}}>{done?"✅":sub?.icon||"📚"}</span>
