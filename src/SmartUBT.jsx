@@ -2489,9 +2489,9 @@ function LessonModal({modal,setModal,selSub,content,setContent,showToast}){
         </div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(min(140px,44%),1fr))",gap:12,marginBottom:14}}>
           <div>
-            <label style={{fontSize:11,fontWeight:700,color:"#9CA3AF",display:"block",marginBottom:5,letterSpacing:1}}>ВИДЕО URL</label>
+            <label style={{fontSize:11,fontWeight:700,color:"#9CA3AF",display:"block",marginBottom:5,letterSpacing:1}}>ВИДЕО САБАҚ — YouTube сілтемесін кейін қосуға болады</label>
             <input value={form.videoUrl||""} onChange={e=>setForm(p=>({...p,videoUrl:e.target.value}))}
-              style={inp} placeholder="https://www.youtube.com/embed/..."/>
+              style={inp} placeholder="https://www.youtube.com/watch?v=..."/>
           </div>
           <div>
             <label style={{fontSize:11,fontWeight:700,color:"#9CA3AF",display:"block",marginBottom:5,letterSpacing:1}}>КОНСПЕКТ PDF URL</label>
@@ -5087,7 +5087,7 @@ function SmartUBTInner(){
                   <div key={ls.id}
                     onClick={()=>{
                       if(!unlocked){setAdminModal({type:"payment"});return;}
-                      setTopicId(tp.id);setLessonId(ls.id);setLessonTab(ls.id.endsWith("_review")?"bekitu":(ls.videoUrl?"video":"bekitu"));setGameMode(null);setPage("lesson");
+                      setTopicId(tp.id);setLessonId(ls.id);setLessonTab(ls.id.endsWith("_review")?"bekitu":"video");setGameMode(null);setPage("lesson");
                     }}
                     style={{background:done?"#F0FFF4":unlocked?"#FAFAFE":"#F5F5F5",borderRadius:14,padding:14,
                       cursor:unlocked?"pointer":"not-allowed",
@@ -5173,7 +5173,7 @@ function SmartUBTInner(){
       {id:"bekitu",  icon:"📝", label:"Тарау тесті",  unlocked:true,     done:bekituOk},
       {id:"error",   icon:"🔄", label:"Қатемен жұмыс",unlocked:bekituOk, done:bekituOk&&errHasContent},
     ]:[
-      ...(hasVideo?[{id:"video",icon:"📹",label:"Видео",unlocked:true,done:!!lp.videoWatched}]:[]),
+      {id:"video",icon:"📹",label:"Видео",unlocked:true,done:!!lp.videoWatched},
       {id:"bekitu",  icon:"✅", label:"Бекіту",      unlocked:videoOk,        done:bekituOk},
       {id:"konspekt",icon:"📄", label:"Конспект",    unlocked:bekituOk,       done:konspektOk},
       {id:"jazba",   icon:"✏️", label:"Жазба",       unlocked:konspektOk,     done:jazbaOk},
@@ -5266,13 +5266,22 @@ function SmartUBTInner(){
                 <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"#fff",textAlign:"center",padding:24}}>
                   <div style={{fontSize:28,marginBottom:12}}>▶</div>
                   <div style={{fontSize:16,fontWeight:800}}>{lesson.title}</div>
-                  <div style={{fontSize:12,color:"rgba(255,255,255,0.5)",marginTop:8}}>Админ видео URL қосады</div>
+                  <div style={{fontSize:12,color:"rgba(255,255,255,0.72)",marginTop:8}}>YouTube сілтемесі кейін қосылғанда видео осы жерде ашылады</div>
                 </div>
               )}
             </div>
             <div style={{...C.card,padding:20}}>
               <div style={{fontWeight:900,fontSize:16,color:"#1E1B4B",marginBottom:6}}>{lesson.title}</div>
-              {!videoOk?(
+              {!hasVideo?(
+                <div>
+                  <div style={{background:"#EEF2FF",borderRadius:12,padding:"12px 16px",marginBottom:14,fontSize:13,color:"#4338CA"}}>
+                    Бұл сабақтың видеосы әзірге қосылмаған. YouTube сілтемесі қосылғанда, оны осы жерден көре аласыз.
+                  </div>
+                  <button style={{...C.btn,...C.pri,width:"100%",padding:"13px 0",fontSize:15,fontWeight:800}} onClick={()=>setLessonTab("bekitu")}>
+                    Бекіту тапсырмасына өту →
+                  </button>
+                </div>
+              ):!videoOk?(
                 <div>
                   <div style={{background:"#EEF2FF",borderRadius:12,padding:"12px 16px",marginBottom:14,fontSize:13,color:"#4338CA"}}>
                     💡 Видеоны толық тамашалаған соң <b>«Видеоны аяқтадым»</b> батырмасын басыңыз.
@@ -6019,7 +6028,7 @@ function SmartUBTInner(){
                             setSubjectId(l.sid);setTopicId(null);
                             const allTops=content.topics[l.sid]||[];
                             const tp=allTops.find(t=>t.lessons.some(ls=>ls.id===l.lessonId));
-                            if(tp){const matchingLesson=tp.lessons.find(ls=>ls.id===l.lessonId);setTopicId(tp.id);setLessonId(l.lessonId);setLessonTab(l.lessonId.endsWith("_review")?"bekitu":(matchingLesson?.videoUrl?"video":"bekitu"));setGameMode(null);setPage("lesson");}
+                            if(tp){setTopicId(tp.id);setLessonId(l.lessonId);setLessonTab(l.lessonId.endsWith("_review")?"bekitu":"video");setGameMode(null);setPage("lesson");}
                             else{setPage("lessons");}
                           }}>
                           <span style={{fontSize:16}}>{done?"✅":sub?.icon||"📚"}</span>
