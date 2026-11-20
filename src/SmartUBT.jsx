@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import * as mammoth from "mammoth";
 import { FINAL_EXTRA } from "./finalExtra.js";
+import { answerFromKnowledgeBase } from "./knowledgeAssistant.js";
+import { getGeneratedFixQuestions, getLessonDescription } from "./lessonPractice.js";
 
 /* ════ RECHARTS ════ */
 /* Recharts CDN жүктеу алынып тасталды — Vite React-ты window.React етіп шығармайтындықтан, бұл UMD скрипт ешқашан дұрыс жұмыс істей алмайды (Layer.tsx: forwardRef қатесі). Статистика беті график компоненттерінің жоқтығын өзі тексеріп, оларсыз көрсетеді. */
@@ -90,9 +92,9 @@ const PACKAGES = [
 ];
 
 const PLANS = [
-  { id:"free",    name:"Тегін",    price:0,     color:"#6B7280", features:["5 тест/күн","1-сабақ ашық (демо)","AI: 10 сұрақ/күн"],      limit:5 },
-  { id:"basic",   name:"Базалық",  price:2990,  color:"#6366F1", features:["Шексіз тест","Барлық видео","AI: 50 сұрақ/күн","PDF"],      limit:50, popular:false },
-  { id:"premium", name:"Премиум",  price:4990,  color:"#F59E0B", features:["Барлық функция","AI шексіз","Куратор","Сертификат"],         limit:999, popular:true },
+  { id:"free",    name:"Тегін",    price:0,     color:"#6B7280", features:["5 тест/күн","1-сабақ ашық (демо)","Дерекқор бойынша көмекші"],      limit:5 },
+  { id:"basic",   name:"Базалық",  price:2990,  color:"#6366F1", features:["Шексіз тест","Барлық видео","Дерекқор бойынша көмекші","PDF"],      limit:50, popular:false },
+  { id:"premium", name:"Премиум",  price:4990,  color:"#F59E0B", features:["Барлық функция","Дерекқор бойынша көмекші","Куратор","Сертификат"],         limit:999, popular:true },
   { id:"package", name:"Пакет",    price:0,     color:"#EC4899", features:["Таңдалған пәндер","Апталық жоспар","Толық модуль"],         limit:999 },
 ];
 
@@ -2682,7 +2684,8 @@ function LessonsView({selSub,selTopic,getTops,setContent,setView,setModal,delLes
       )}
       <div style={{display:"flex",flexDirection:"column",gap:8}}>
         {tp.lessons.map((ls,i)=>{
-          const bQs=content.lessonTests?.[ls.id]||[];
+          const storedBQs=content.lessonTests?.[ls.id]||[];
+          const bQs=storedBQs.length?storedBQs:getGeneratedFixQuestions(ls.id,content.topics||TOPICS);
           const hQs=content.hwTests?.[ls.id]||[];
           const errW=content.lessonErrorWork?.[ls.id];
           const hasErr=errW?.videoUrl||errW?.pdfUrl;
@@ -3536,50 +3539,61 @@ const seededShuffle=(arr,seed)=>{
 // ── Жеңіл Markdown рендерер (сабақ теориясы үшін: #### / ### тақырыпша, **қалың**, - тізім, 1. нөмірленген тізім) ──
 function LessonRichText({text}){
   if(!text)return null;
-  const blocks=text.split(/\n\n+/);
-  const renderInline=(s,ki)=>{
-    const parts=s.split(/(\*\*[^*]+\*\*)/g);
-    return parts.map((p,i)=>p.startsWith("**")&&p.endsWith("**")
-      ?<b key={ki+"-"+i} style={{color:"#1E1B4B"}}>{p.slice(2,-2)}</b>
-      :<React.Fragment key={ki+"-"+i}>{p}</React.Fragment>);
+  const toSub=value=>String(value).replace(/[0-9a-z+\-()]/g,ch=>({"0":"₀","1":"₁","2":"₂","3":"₃","4":"₄","5":"₅","6":"₆","7":"₇","8":"₈","9":"₉",a:"ₐ",e:"ₑ",h:"ₕ",i:"ᵢ",j:"ⱼ",k:"ₖ",l:"ₗ",m:"ₘ",n:"ₙ",o:"ₒ",p:"ₚ",r:"ᵣ",s:"ₛ",t:"ₜ",u:"ᵤ",v:"ᵥ",x:"ₓ","+":"₊","-":"₋","(":"₍",")":"₎"}[ch]||ch));
+  const toSup=value=>String(value).replace(/[0-9a-z+\-()=]/g,ch=>({"0":"⁰","1":"¹","2":"²","3":"³","4":"⁴","5":"⁵","6":"⁶","7":"⁷","8":"⁸","9":"⁹",a:"ᵃ",b:"ᵇ",n:"ⁿ","+":"⁺","-":"⁻","(":"⁽",")":"⁾","=":"⁼"}[ch]||ch));
+  const mathText=value=>String(value)
+    .replace(/\\(?:mathrm|text)\{([^{}]*)\}/g,"$1")
+    .replace(/\\frac\{([^{}]+)\}\{([^{}]+)\}/g,"$1⁄$2")
+    .replace(/\\(?:times|cdot)/g,"×").replace(/\\approx/g,"≈").replace(/\\%/g,"%")
+    .replace(/\^\{([^}]+)\}/g,(_,v)=>toSup(v)).replace(/_\{([^}]+)\}/g,(_,v)=>toSub(v))
+    .replace(/\^([0-9+\-]+)/g,(_,v)=>toSup(v)).replace(/_([0-9]+|[a-z])/g,(_,v)=>toSub(v))
+    .replace(/\s+/g," ").trim();
+  const formatText=value=>mathText(value).replace(/\\%/g,"%");
+  const renderInline=(value,key)=>{
+    const parts=String(value).split(/(\*\*[^*]+\*\*|`[^`]+`|\$[^$\n]+\$)/g);
+    return parts.map((part,i)=>{
+      const k=`${key}-${i}`;
+      if(part.startsWith("**")&&part.endsWith("**"))return <b key={k} style={{color:"#1E1B4B"}}>{formatText(part.slice(2,-2))}</b>;
+      if(part.startsWith("`")&&part.endsWith("`"))return <code key={k} style={{fontFamily:"ui-monospace,monospace",background:"#F3F4F6",padding:"1px 4px",borderRadius:4}}>{formatText(part.slice(1,-1))}</code>;
+      if(part.startsWith("$")&&part.endsWith("$"))return <span key={k} style={{fontFamily:"ui-monospace,monospace",whiteSpace:"nowrap",color:"#312E81"}}>{mathText(part.slice(1,-1))}</span>;
+      return <React.Fragment key={k}>{formatText(part)}</React.Fragment>;
+    });
   };
+  const normalized=String(text).replace(/\r/g,"").replace(/^\s*\$\s*\n([\s\S]*?)\n\s*\$\s*$/gm,(_,equation)=>`$$${equation.trim()}$$`);
+  const blocks=normalized.split(/\n\s*\n+/);
+  const isDivider=line=>/^\|[\s:|−–—-]+\|$/.test(line.trim());
   return(
-    <div style={{color:"#374151",fontSize:14,lineHeight:1.75}}>
+    <div style={{color:"#374151",fontSize:14,lineHeight:1.8,overflowWrap:"anywhere"}}>
       {blocks.map((block,bi)=>{
         const lines=block.split("\n").filter(l=>l.trim());
         if(!lines.length)return null;
-        const isTableBlock=lines.length>=2&&lines[0].trim().startsWith("|")&&/^\|[\s:|-]+\|$/.test(lines[1]?.trim()||"");
-        if(isTableBlock){
-          const rows=[lines[0],...lines.slice(2)].map(l=>l.trim().replace(/^\||\|$/g,"").split("|").map(c=>c.trim()));
-          return(
-            <div key={bi} style={{overflowX:"auto",margin:"10px 0"}}>
-              <table style={{borderCollapse:"collapse",width:"100%",fontSize:13}}>
-                <thead><tr>{rows[0].map((c,ci)=><th key={ci} style={{textAlign:"left",padding:"6px 10px",background:"#EEF0FF",color:"#1E1B4B",fontWeight:800,border:"1px solid #E5E7EB"}}>{renderInline(c,bi+"h"+ci)}</th>)}</tr></thead>
-                <tbody>{rows.slice(1).map((r,ri)=><tr key={ri}>{r.map((c,ci)=><td key={ci} style={{padding:"6px 10px",border:"1px solid #E5E7EB"}}>{renderInline(c,bi+"r"+ri+"c"+ci)}</td>)}</tr>)}</tbody>
-              </table>
-            </div>
-          );
+        const trimmed=block.trim();
+        const mathBlock=trimmed.match(/^\$\$\s*([\s\S]*?)\s*\$\$$/);
+        if(mathBlock)return <div key={bi} role="math" style={{overflowX:"auto",margin:"12px 0",padding:"12px 16px",borderRadius:10,background:"#F8FAFC",textAlign:"center",fontFamily:"ui-monospace,monospace",fontSize:15,color:"#312E81"}}>{mathText(mathBlock[1])}</div>;
+        if(lines.length>=2&&lines[0].trim().startsWith("|")&&isDivider(lines[1])){
+          const rows=lines.filter((line,index)=>index!==1&&!isDivider(line)).map(line=>line.trim().replace(/^\||\|$/g,"").split("|").map(cell=>cell.trim()));
+          const head=rows[0]||[];
+          return <div key={bi} style={{overflowX:"auto",margin:"12px 0",border:"1px solid #E5E7EB",borderRadius:10}}><table style={{borderCollapse:"collapse",width:"100%",fontSize:13,minWidth:Math.min(head.length*105,560)}}><thead><tr>{head.map((cell,ci)=><th key={ci} scope="col" style={{textAlign:"left",padding:"9px 11px",background:"#EEF0FF",color:"#1E1B4B",fontWeight:800,borderBottom:"1px solid #DDE2F2"}}>{renderInline(cell,`${bi}h${ci}`)}</th>)}</tr></thead><tbody>{rows.slice(1).map((row,ri)=><tr key={ri} style={{background:ri%2?"#FAFBFF":"#fff"}}>{head.map((_,ci)=><td key={ci} style={{verticalAlign:"top",padding:"8px 11px",borderBottom:"1px solid #EEF0F4"}}>{renderInline(row[ci]||"",`${bi}r${ri}c${ci}`)}</td>)}</tr>)}</tbody></table></div>;
         }
-        if(/^####\s/.test(lines[0])){
-          return <div key={bi} style={{fontWeight:800,fontSize:14,color:"#4F46E5",marginTop:16,marginBottom:6}}>{renderInline(lines[0].replace(/^####\s/,""),bi)}</div>;
+        if(/^#{1,6}\s/.test(lines[0])){
+          const depth=lines[0].match(/^#+/)[0].length;
+          const label=lines[0].replace(/^#{1,6}\s/,"");
+          return <div key={bi} role={`heading`} aria-level={Math.min(depth+1,6)} style={{fontWeight:depth<=3?900:800,fontSize:depth<=2?18:depth===3?16:14,color:depth<=3?"#1E1B4B":"#4F46E5",marginTop:depth<=2?24:16,marginBottom:8,paddingTop:depth<=2?12:0,borderTop:depth<=2?"1px solid #EEF0FF":"none"}}>{renderInline(label,bi)}</div>;
         }
-        if(/^###\s/.test(lines[0])){
-          return <div key={bi} style={{fontWeight:900,fontSize:16,color:"#1E1B4B",marginTop:20,marginBottom:8,paddingTop:12,borderTop:"1px solid #EEF0FF"}}>{renderInline(lines[0].replace(/^###\s/,""),bi)}</div>;
+        if(lines.every(l=>/^\s*>/.test(l))){
+          return <blockquote key={bi} style={{margin:"10px 0",padding:"10px 14px",borderLeft:"4px solid #818CF8",borderRadius:"0 10px 10px 0",background:"#F5F6FF",color:"#374151"}}>{lines.map(l=>l.replace(/^\s*>\s?/,"")).map((line,i)=><React.Fragment key={i}>{i>0&&<br/>}{renderInline(line,`${bi}q${i}`)}</React.Fragment>)}</blockquote>;
         }
-        const isBulletBlock=lines.every(l=>/^-\s/.test(l.trim()));
-        const isNumBlock=lines.every(l=>/^\d+\.\s/.test(l.trim()));
-        if(isBulletBlock){
-          return <ul key={bi} style={{margin:"6px 0",paddingLeft:20}}>{lines.map((l,li)=><li key={li} style={{marginBottom:4}}>{renderInline(l.replace(/^-\s/,""),bi+"-"+li)}</li>)}</ul>;
+        if(lines.every(l=>/^\s*[-*+]\s/.test(l))){
+          return <ul key={bi} style={{margin:"8px 0",paddingLeft:22}}>{lines.map((line,i)=><li key={i} style={{paddingLeft:3,marginBottom:5}}>{renderInline(line.replace(/^\s*[-*+]\s/,""),`${bi}u${i}`)}</li>)}</ul>;
         }
-        if(isNumBlock){
-          return <ol key={bi} style={{margin:"6px 0",paddingLeft:20}}>{lines.map((l,li)=><li key={li} style={{marginBottom:4}}>{renderInline(l.replace(/^\d+\.\s/,""),bi+"-"+li)}</li>)}</ol>;
+        if(lines.every(l=>/^\s*\d+[.)]\s/.test(l))){
+          return <ol key={bi} style={{margin:"8px 0",paddingLeft:24}}>{lines.map((line,i)=><li key={i} style={{paddingLeft:3,marginBottom:5}}>{renderInline(line.replace(/^\s*\d+[.)]\s/,""),`${bi}o${i}`)}</li>)}</ol>;
         }
-        return <p key={bi} style={{margin:"0 0 10px"}}>{renderInline(block,bi)}</p>;
+        return <p key={bi} style={{margin:"0 0 12px"}}>{lines.map((line,i)=><React.Fragment key={i}>{i>0&&<br/>}{renderInline(line,`${bi}p${i}`)}</React.Fragment>)}</p>;
       })}
     </div>
   );
 }
-
 // ── ҰБТ балл жүйесі: 1 балдық (бір жауап/мәнмәтін) және 2 балдық (сәйкестендіру/көп жауап) ──
 const isMultiQ=q=>!!(q.multi||q.type==="multi");
 const qWeight=q=>(q.type==="match"||isMultiQ(q))?2:1;
@@ -4056,7 +4070,9 @@ function SmartUBTInner(){
     const configCount=(content[countKey]||{})[lid]||(mode==="hw"?20:10);
     const isRev=String(lid).endsWith("_review");
     const useExtraOnly=isRev&&mode!=="hw"&&FINAL_EXTRA[lid]?.replace;
-    const pool=useExtraOnly?extraFor(lid):[...((mode==="hw"?content.hwTests?.[lid]:content.lessonTests?.[lid])||[]),...(isRev&&mode!=="hw"?extraFor(lid):[])];
+    const savedPool=(mode==="hw"?content.hwTests?.[lid]:content.lessonTests?.[lid])||[];
+    const generatedPool=mode==="fix"&&!isRev&&!savedPool.length?getGeneratedFixQuestions(lid,content.topics||TOPICS):[];
+    const pool=useExtraOnly?extraFor(lid):[...savedPool,...generatedPool,...(isRev&&mode!=="hw"?extraFor(lid):[])];
     if(!pool.length)return showToast(mode==="hw"?"Үй жұмысы сұрақтары жоқ":"Бекіту сұрақтары жоқ","err");
     const fin=isRev&&mode!=="hw"?buildFinal(pool):null;
     const qs=fin?fin.qs:[...pool].sort(()=>Math.random()-0.5);
@@ -4136,20 +4152,22 @@ function SmartUBTInner(){
     setPage("result");
   };
 
-  /* ── AI ── */
+  /* ── Дерекқорға сүйенетін, API кілтін/ақылы токенді қажет етпейтін оқу көмекшісі ── */
   const askAI=async()=>{
-    if(!aiInput.trim())return;
-    const msg=aiInput;setAiInput("");
-    setAiMsgs(p=>[...p,{role:"user",text:msg}]);setAiLoad(true);
+    const msg=aiInput.trim();
+    if(!msg||aiLoad)return;
+    setAiInput("");
+    setAiMsgs(p=>[...p,{role:"user",text:msg}]);
+    setAiLoad(true);
+    // Yield one frame so the interface can show its loading state before local search.
+    await new Promise(resolve=>setTimeout(resolve,0));
     try{
-      const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,
-          system:"Сен Smart UBT қосымшасының AI мұғалімісің. Қазақстандық ҰБТ-ға дайындалатын оқушыларға жәрдем бересің. БАРЛЫҚ жауапты қазақ тілінде жаз. Мектеп пәндерін түсіндір, формулалар мен мысалдар келтір. Жауабыңды нақты, оқушыға түсінікті жаз.",
-          messages:[...aiMsgs.map(m=>({role:m.role,content:m.text})),{role:"user",content:msg}]})});
-      const d=await res.json();
-      setAiMsgs(p=>[...p,{role:"assistant",text:d.content?.[0]?.text||"Қате орын алды"}]);
-    }catch{setAiMsgs(p=>[...p,{role:"assistant",text:"API қатесі. Желі байланысын тексеріңіз."}]);}
-    setAiLoad(false);
+      const answer=answerFromKnowledgeBase(msg,{topics:content.topics||TOPICS,content});
+      setAiMsgs(p=>[...p,{role:"assistant",text:answer}]);
+    }catch(error){
+      console.error("Knowledge assistant error:",error);
+      setAiMsgs(p=>[...p,{role:"assistant",text:"Оқу базасын қазір іздей алмадым. Сабақтар бөлімінен тақырыпты ашып көріңіз."}]);
+    }finally{setAiLoad(false);}
   };
 
   const myResults=results.filter(r=>r.userId===user?.id);
@@ -4202,7 +4220,7 @@ function SmartUBTInner(){
         <h1 style={{fontSize:42,fontWeight:900,color:"#fff",letterSpacing:-1.5,marginBottom:16,lineHeight:1.1}}>Smart UBT App</h1>
         <p style={{color:"rgba(255,255,255,0.75)",fontSize:18,marginBottom:12,lineHeight:1.6}}>Қазақстанның ең заманауи ҰБТ дайындық платформасы</p>
         <div style={{display:"flex",gap:10,justifyContent:"center",flexWrap:"wrap",marginBottom:36}}>
-          {["🤖 AI Мұғалім","📹 Видео сабақтар","✏️ ҰБТ тесттер","📊 Прогресс бақылау"].map(f=>(
+          {["📚 Оқу көмекшісі","📹 Видео сабақтар","✏️ ҰБТ тесттер","📊 Прогресс бақылау"].map(f=>(
             <span key={f} style={{background:"rgba(255,255,255,0.15)",color:"#fff",borderRadius:99,padding:"6px 14px",fontSize:13,fontWeight:600,backdropFilter:"blur(8px)"}}>{f}</span>
           ))}
         </div>
@@ -4881,7 +4899,7 @@ function SmartUBTInner(){
             {i:"🎴",l:"Флэшкарта",p:"flashcard",bg:"linear-gradient(135deg,#7C3AED,#9333EA)"},
             {i:"🏆",l:"Рейтинг",p:"leaderboard",bg:"linear-gradient(135deg,#F59E0B,#D97706)"},
             {i:"📅",l:"Жоспар",p:"plan",bg:"linear-gradient(135deg,#0EA5E9,#0284C7)"},
-            {i:"🤖",l:"AI Мұғалім",p:"ai",bg:"linear-gradient(135deg,#22C55E,#16A34A)"},
+            {i:"🤖",l:"Оқу көмекшісі",p:"ai",bg:"linear-gradient(135deg,#22C55E,#16A34A)"},
           ].map(({i,l,p,bg})=>(
             <div key={p} onClick={()=>setPage(p)} style={{background:bg,borderRadius:14,padding:"12px 8px",textAlign:"center",cursor:"pointer",boxShadow:"0 4px 12px rgba(0,0,0,0.1)"}}>
               <div style={{fontSize:22,marginBottom:4}}>{i}</div>
@@ -5069,7 +5087,7 @@ function SmartUBTInner(){
                   <div key={ls.id}
                     onClick={()=>{
                       if(!unlocked){setAdminModal({type:"payment"});return;}
-                      setTopicId(tp.id);setLessonId(ls.id);setLessonTab(ls.id.endsWith("_review")?"bekitu":"video");setGameMode(null);setPage("lesson");
+                      setTopicId(tp.id);setLessonId(ls.id);setLessonTab(ls.id.endsWith("_review")?"bekitu":(ls.videoUrl?"video":"bekitu"));setGameMode(null);setPage("lesson");
                     }}
                     style={{background:done?"#F0FFF4":unlocked?"#FAFAFE":"#F5F5F5",borderRadius:14,padding:14,
                       cursor:unlocked?"pointer":"not-allowed",
@@ -5128,7 +5146,8 @@ function SmartUBTInner(){
     /* ── progress helpers ── */
     const lp=user?.lessonProgress?.[lessonId]||{};
     // Unlock chain: video→bekitu→konspekt→jazba→hw→error
-    const videoOk  = !!lp.videoWatched;
+    const hasVideo = !!lesson.videoUrl;
+    const videoOk  = !hasVideo || !!lp.videoWatched;
     const bekituOk = (lp.bekituScore||0)>=80;
     const konspektOk= !!lp.konspektDone;
     const jazbaOk  = !!lp.jazbaDone || (content.writingTasks?.[lessonId]||[]).length===0;
@@ -5139,7 +5158,8 @@ function SmartUBTInner(){
 
     const saveLp=(patch)=>updateUser(prev=>({lessonProgress:{...prev.lessonProgress,[lessonId]:{...(prev.lessonProgress?.[lessonId]||{}),...patch}}}));
 
-    const fixQs    = content.lessonTests?.[lessonId]||[];
+    const savedFixQs=content.lessonTests?.[lessonId]||[];
+    const fixQs    = savedFixQs.length?savedFixQs:getGeneratedFixQuestions(lessonId,content.topics||TOPICS);
     const hwQs     = content.hwTests?.[lessonId]||[];
     const writingQs= content.writingTasks?.[lessonId]||[];
     const hwResult = lp.hwResult||null;
@@ -5153,7 +5173,7 @@ function SmartUBTInner(){
       {id:"bekitu",  icon:"📝", label:"Тарау тесті",  unlocked:true,     done:bekituOk},
       {id:"error",   icon:"🔄", label:"Қатемен жұмыс",unlocked:bekituOk, done:bekituOk&&errHasContent},
     ]:[
-      {id:"video",   icon:"📹", label:"Видео",       unlocked:true,           done:videoOk},
+      ...(hasVideo?[{id:"video",icon:"📹",label:"Видео",unlocked:true,done:!!lp.videoWatched}]:[]),
       {id:"bekitu",  icon:"✅", label:"Бекіту",      unlocked:videoOk,        done:bekituOk},
       {id:"konspekt",icon:"📄", label:"Конспект",    unlocked:bekituOk,       done:konspektOk},
       {id:"jazba",   icon:"✏️", label:"Жазба",       unlocked:konspektOk,     done:jazbaOk},
@@ -5357,7 +5377,7 @@ function SmartUBTInner(){
             <div>
               <div style={{...C.card,padding:20,marginBottom:14}}>
                 <div style={{fontWeight:800,fontSize:16,marginBottom:12}}>📘 Теория</div>
-                <LessonRichText text={lesson.description}/>
+                <LessonRichText text={getLessonDescription(lesson)}/>
               </div>
               <div style={{...C.card,padding:20,marginBottom:14}}>
                 <div style={{fontWeight:800,fontSize:16,marginBottom:12}}>📄 Мұғалімнің конспекті</div>
@@ -5999,7 +6019,7 @@ function SmartUBTInner(){
                             setSubjectId(l.sid);setTopicId(null);
                             const allTops=content.topics[l.sid]||[];
                             const tp=allTops.find(t=>t.lessons.some(ls=>ls.id===l.lessonId));
-                            if(tp){setTopicId(tp.id);setLessonId(l.lessonId);setLessonTab(l.lessonId.endsWith("_review")?"bekitu":"video");setGameMode(null);setPage("lesson");}
+                            if(tp){const matchingLesson=tp.lessons.find(ls=>ls.id===l.lessonId);setTopicId(tp.id);setLessonId(l.lessonId);setLessonTab(l.lessonId.endsWith("_review")?"bekitu":(matchingLesson?.videoUrl?"video":"bekitu"));setGameMode(null);setPage("lesson");}
                             else{setPage("lessons");}
                           }}>
                           <span style={{fontSize:16}}>{done?"✅":sub?.icon||"📚"}</span>
@@ -6146,15 +6166,15 @@ function SmartUBTInner(){
   ════════════════════════════════════════════════════════ */
   const PageAI=()=>(
     <div style={{maxWidth:720,margin:"0 auto"}}>
-      <h2 style={{fontWeight:900,fontSize:22,marginBottom:4,color:"#1E1B4B"}}>🤖 AI Мұғалім</h2>
-      <p style={{color:"#9CA3AF",marginBottom:16}}>Кез-келген ҰБТ сұрағын қазақша сұраңыз</p>
+      <h2 style={{fontWeight:900,fontSize:22,marginBottom:4,color:"#1E1B4B"}}>📚 Оқу көмекшісі</h2>
+      <p style={{color:"#9CA3AF",marginBottom:16}}>Курстағы сабақтар мен тесттерден жауап іздеңіз</p>
       <div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap"}}>
-        {["Математика интегралын түсіндір","Фотосинтез дегеніміз не?","Ньютон заңдары","Алаш Орда тарихы","log₂(16) = ?"].map(q=>(
+        {["Атомның құрылысы","Моль санын қалай табады?","Химиялық байланыс түрлері","Тотығу-тотықсыздану реакциясы","Қышқыл мен негіз деген не?"].map(q=>(
           <button key={q} onClick={()=>setAiInput(q)} style={{...C.btn,...C.sec,padding:"6px 12px",fontSize:12}}>{q}</button>
         ))}
       </div>
       <div ref={aiRef} style={{...C.card,height:420,overflowY:"auto",marginBottom:14,padding:16,display:"flex",flexDirection:"column",gap:12}}>
-        {aiMsgs.length===0&&<div style={{margin:"auto",textAlign:"center",color:"#9CA3AF"}}><div style={{fontSize:52,marginBottom:8}}>🤖</div><div style={{fontWeight:700,marginBottom:4}}>AI Мұғалімге қош келдіңіз!</div><div style={{fontSize:14}}>Кез-келген сұрақты қазақша сұраңыз</div></div>}
+        {aiMsgs.length===0&&<div style={{margin:"auto",textAlign:"center",color:"#9CA3AF"}}><div style={{fontSize:52,marginBottom:8}}>🤖</div><div style={{fontWeight:700,marginBottom:4}}>AI Мұғалімге қош келдіңіз!</div><div style={{fontSize:14}}>Курстағы сұрақтарға дереккөзбен жауап алыңыз</div></div>}
         {aiMsgs.map((m,i)=>(
           <div key={i} style={{display:"flex",justifyContent:m.role==="user"?"flex-end":"flex-start"}}>
             <div style={{maxWidth:"82%",padding:"12px 16px",borderRadius:m.role==="user"?"18px 18px 4px 18px":"4px 18px 18px 18px",background:m.role==="user"?"linear-gradient(135deg,#4F46E5,#7C3AED)":"#fff",color:m.role==="user"?"#fff":"#1E1B4B",fontSize:14,lineHeight:1.7,boxShadow:"0 2px 8px rgba(0,0,0,0.07)",border:m.role==="assistant"?"1px solid #EEF0FF":"none",whiteSpace:"pre-wrap"}}>
