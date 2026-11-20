@@ -182,6 +182,32 @@ const sbFetchUsers=async()=>{
   }catch(e){console.error("Supabase fetch error:",e);return [];}
 };
 
+// Shared lesson media: a video URL saved by an administrator is visible on every device.
+const sbFetchLessonMedia=async()=>{
+  try{
+    const res=await fetch(SUPABASE_URL+"/rest/v1/lesson_media?select=lesson_id,video_url,is_free",{headers:sbHeaders()});
+    if(!res.ok){console.error("Lesson media fetch failed:",await res.text());return [];}
+    return await res.json();
+  }catch(e){console.error("Lesson media fetch error:",e);return [];}
+};
+const sbSetLessonMedia=async(email,password,lessonId,videoUrl,isFree)=>{
+  try{
+    const res=await fetch(SUPABASE_URL+"/rest/v1/rpc/admin_set_lesson_media",{
+      method:"POST",headers:sbHeaders(),
+      body:JSON.stringify({p_email:email,p_password:password,p_lesson_id:lessonId,p_video_url:videoUrl,p_is_free:isFree})
+    });
+    if(!res.ok){console.error("Lesson media save failed:",await res.text());return false;}
+    return (await res.json())===true;
+  }catch(e){console.error("Lesson media save error:",e);return false;}
+};
+const isYouTubeUrl=(value)=>{
+  try{
+    const url=new URL(String(value||"").trim());
+    const host=url.hostname.toLowerCase();
+    return url.protocol==="https:"&&(host==="youtu.be"||host==="youtube.com"||host.endsWith(".youtube.com"));
+  }catch{return false;}
+};
+
 // Fetch a single user row from Supabase by email (used to verify activation code even after a page reload / on a different device)
 const sbFetchUserByEmail=async(email)=>{
   try{
@@ -2346,7 +2372,7 @@ function TrueFalseGame({questions,onDone,C}){
   );
 }
 
-function LessonModal({modal,setModal,selSub,content,setContent,showToast}){
+function LessonModal({modal,setModal,selSub,content,setContent,showToast,adminEmail,adminPassword}){
   if(!modal)return null;
   const GI={...GC};
   const inp={...GC.input,fontSize:13,marginBottom:0};
@@ -2489,7 +2515,7 @@ function LessonModal({modal,setModal,selSub,content,setContent,showToast}){
         </div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(min(140px,44%),1fr))",gap:12,marginBottom:14}}>
           <div>
-            <label style={{fontSize:11,fontWeight:700,color:"#9CA3AF",display:"block",marginBottom:5,letterSpacing:1}}>ВИДЕО САБАҚ — YouTube сілтемесін кейін қосуға болады</label>
+            <label style={{fontSize:11,fontWeight:700,color:"#9CA3AF",display:"block",marginBottom:5,letterSpacing:1}}>🎬 ВИДЕО САБАҚ — YouTube сілтемесі (барлық оқушыға сақталады)</label>
             <input value={form.videoUrl||""} onChange={e=>setForm(p=>({...p,videoUrl:e.target.value}))}
               style={inp} placeholder="https://www.youtube.com/watch?v=..."/>
           </div>
@@ -2533,15 +2559,27 @@ function LessonModal({modal,setModal,selSub,content,setContent,showToast}){
         </div>
         <div style={{display:"flex",gap:10}}>
           <button onClick={()=>setModal(null)} style={{...GC.btn,...GC.sec,flex:1,padding:12,fontSize:14}}>Бас тарту</button>
-          <button onClick={()=>{
+          <button onClick={async()=>{
             if(!form.title?.trim())return showToast("Сабақ атауы міндетті","err");
+            const lid=isNew?"l"+Date.now():form.id;
+            const previousVideo=modal.lesson?.videoUrl||"";
+            const previousFree=!!modal.lesson?.isFree;
+            const nextVideo=(form.videoUrl||"").trim();
+            const mediaChanged=nextVideo!==previousVideo||!!form.isFree!==previousFree;
+            if(mediaChanged){
+              if(nextVideo&&!isYouTubeUrl(nextVideo))return showToast("YouTube сілтемесін https://www.youtube.com немесе https://youtu.be форматында енгізіңіз","err");
+              const password=adminPassword||window.prompt("Видеоны ортақ базаға сақтау үшін әкімші құпия сөзін енгізіңіз:");
+              if(!password)return;
+              if(!adminEmail)return showToast("Әкімші аккаунты анықталмады. Қайта кіріп көріңіз.","err");
+              const saved=await sbSetLessonMedia(adminEmail,password,lid,nextVideo,!!form.isFree);
+              if(!saved)return showToast("Видео сақталмады. Әкімші құпия сөзін тексеріңіз немесе кейін қайталаңыз.","err");
+            }
             setContent(p=>{
-              const lid=isNew?"l"+Date.now():form.id;
               const newTopics=(p.topics?.[selSub.id]||[]).map(t=>t.id!==modal.topicId?t:{...t,
-                lessons:isNew?[...t.lessons,{id:lid,title:form.title,duration:form.duration||"15 мін",videoUrl:form.videoUrl||"",pdfUrl:form.pdfUrl||"",description:form.description||"",isFree:form.isFree}]:
-                  t.lessons.map(l=>l.id===form.id?{...l,title:form.title,duration:form.duration,videoUrl:form.videoUrl,pdfUrl:form.pdfUrl,description:form.description,isFree:form.isFree}:l)
+                lessons:isNew?[...t.lessons,{id:lid,title:form.title,duration:form.duration||"15 мин",videoUrl:nextVideo,pdfUrl:form.pdfUrl||"",description:form.description||"",isFree:form.isFree}]:
+                  t.lessons.map(l=>l.id===form.id?{...l,title:form.title,duration:form.duration,videoUrl:nextVideo,pdfUrl:form.pdfUrl,description:form.description,isFree:form.isFree}:l)
               });
-              const finalId=isNew?newTopics.find(t=>t.id===modal.topicId)?.lessons.slice(-1)[0]?.id||lid:form.id;
+              const finalId=lid;
               return{...p,
                 topics:{...p.topics,[selSub.id]:newTopics},
                 lessonTests:{...p.lessonTests,[finalId]:form.bekituQs||[]},
@@ -2560,7 +2598,7 @@ function LessonModal({modal,setModal,selSub,content,setContent,showToast}){
   );
 }
 
-function TopicsView({selSub,getTops,setContent,setSelTopic,setView,addTopicName,setAddTopicName,saveTopic,delTopic,modal,setModal,content,showToast}){
+function TopicsView({selSub,getTops,setContent,setSelTopic,setView,addTopicName,setAddTopicName,saveTopic,delTopic,modal,setModal,content,showToast,adminEmail,adminPassword}){
   const [dragIdx,setDragIdx]=React.useState(null);
   const [editTopicId,setEditTopicId]=React.useState(null);
   const [editTopicVal,setEditTopicVal]=React.useState("");
@@ -2578,7 +2616,7 @@ function TopicsView({selSub,getTops,setContent,setSelTopic,setView,addTopicName,
   };
   return(
     <div style={{paddingBottom:24}}>
-      {modal&&<LessonModal modal={modal} setModal={setModal} selSub={selSub} content={content} setContent={setContent} showToast={showToast}/>}
+      {modal&&<LessonModal modal={modal} setModal={setModal} selSub={selSub} content={content} setContent={setContent} showToast={showToast} adminEmail={adminEmail} adminPassword={adminPassword}/>}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:10}}>
         <div>
           <button onClick={()=>setView("subjects")} style={{...GC.btn,...GC.sec,padding:"6px 12px",fontSize:13,marginBottom:8}}>← Пәндерге қайту</button>
@@ -2637,7 +2675,7 @@ function TopicsView({selSub,getTops,setContent,setSelTopic,setView,addTopicName,
   );
 }
 
-function LessonsView({selSub,selTopic,getTops,setContent,setView,setModal,delLesson,content,modal,showToast}){
+function LessonsView({selSub,selTopic,getTops,setContent,setView,setModal,delLesson,content,modal,showToast,adminEmail,adminPassword}){
   const [dragLsIdx,setDragLsIdx]=React.useState(null);
   const [editLsId,setEditLsId]=React.useState(null);
   const [editLsVal,setEditLsVal]=React.useState("");
@@ -2666,7 +2704,7 @@ function LessonsView({selSub,selTopic,getTops,setContent,setView,setModal,delLes
   };
   return(
     <div>
-      {modal&&<LessonModal modal={modal} setModal={setModal} selSub={selSub} content={content} setContent={setContent} showToast={showToast}/>}
+      {modal&&<LessonModal modal={modal} setModal={setModal} selSub={selSub} content={content} setContent={setContent} showToast={showToast} adminEmail={adminEmail} adminPassword={adminPassword}/>}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:10}}>
         <div>
           <button onClick={()=>setView("topics")} style={{...GC.btn,...GC.sec,padding:"6px 12px",fontSize:13,marginBottom:6}}>← Тараулар</button>
@@ -2752,7 +2790,7 @@ function LessonsView({selSub,selTopic,getTops,setContent,setView,setModal,delLes
   );
 }
 
-function AdminContentManager({content,setContent,showToast}){
+function AdminContentManager({content,setContent,showToast,adminEmail,adminPassword}){
   const [view,setView]=useState("subjects"); // subjects | topics | lessons
   const [selSub,setSelSub]=useState(null);
   const [selTopic,setSelTopic]=useState(null);
@@ -2821,15 +2859,15 @@ function AdminContentManager({content,setContent,showToast}){
           );
         })}
       </div>
-      {modal&&<LessonModal modal={modal} setModal={setModal} selSub={selSub} content={content} setContent={setContent} showToast={showToast}/>}
+      {modal&&<LessonModal modal={modal} setModal={setModal} selSub={selSub} content={content} setContent={setContent} showToast={showToast} adminEmail={adminEmail} adminPassword={adminPassword}/>}
     </div>
   );
 
   // ── TOPICS VIEW delegated to sub-component ──
-  if(view==="topics"&&selSub) return <TopicsView selSub={selSub} getTops={getTops} setContent={setContent} setSelTopic={setSelTopic} setView={setView} addTopicName={addTopicName} setAddTopicName={setAddTopicName} saveTopic={saveTopic} delTopic={delTopic} modal={modal} setModal={setModal} content={content} showToast={showToast}/>;
+  if(view==="topics"&&selSub) return <TopicsView selSub={selSub} getTops={getTops} setContent={setContent} setSelTopic={setSelTopic} setView={setView} addTopicName={addTopicName} setAddTopicName={setAddTopicName} saveTopic={saveTopic} delTopic={delTopic} modal={modal} setModal={setModal} content={content} showToast={showToast} adminEmail={adminEmail} adminPassword={adminPassword}/>;
 
   // ── LESSONS VIEW delegated to sub-component ──
-  if(view==="lessons"&&selSub&&selTopic) return <LessonsView selSub={selSub} selTopic={selTopic} getTops={getTops} setContent={setContent} setView={setView} setModal={setModal} delLesson={delLesson} content={content} modal={modal} showToast={showToast}/>;
+  if(view==="lessons"&&selSub&&selTopic) return <LessonsView selSub={selSub} selTopic={selTopic} getTops={getTops} setContent={setContent} setView={setView} setModal={setModal} delLesson={delLesson} content={content} modal={modal} showToast={showToast} adminEmail={adminEmail} adminPassword={adminPassword}/>;
 
   return null;
 }
@@ -3861,6 +3899,30 @@ function SmartUBTInner(){
   },[]);
   useEffect(()=>{sS("ubt3_users",users)},[users]);
   useEffect(()=>{sS("ubt3_content",content)},[content]);
+  // Restore centrally stored video URLs and free-lesson flags on every device.
+  useEffect(()=>{
+    let active=true;
+    (async()=>{
+      const rows=await sbFetchLessonMedia();
+      if(!active||!rows.length)return;
+      const mediaById=new Map(rows.map(row=>[row.lesson_id,row]));
+      setContent(prev=>{
+        let changed=false;
+        const topics={};
+        Object.entries(prev.topics||{}).forEach(([sid,chapters])=>{
+          topics[sid]=(chapters||[]).map(chapter=>({...chapter,lessons:(chapter.lessons||[]).map(lesson=>{
+            const media=mediaById.get(lesson.id);
+            if(!media)return lesson;
+            const next={...lesson,videoUrl:media.video_url||"",isFree:!!media.is_free};
+            if(next.videoUrl!==(lesson.videoUrl||"")||next.isFree!==!!lesson.isFree)changed=true;
+            return next;
+          })}));
+        });
+        return changed?{...prev,topics}:prev;
+      });
+    })();
+    return()=>{active=false;};
+  },[]);
   useEffect(()=>{sS("ubt3_results",results)},[results]);
 
   // Pull users from Supabase on load for staff, so pending activation codes
@@ -6852,7 +6914,7 @@ function SmartUBTInner(){
       ):null,
       dash:<DashContent/>,
       users:<UsersContent/>,
-      content:<AdminContentManager content={content} setContent={setContent} showToast={showToast}/>,
+      content:<AdminContentManager content={content} setContent={setContent} showToast={showToast} adminEmail={user?.email} adminPassword={loginForm.password}/>,
       variants:(
         <AdminVariantManager content={content} setContent={setContent} showToast={showToast}/>
       ),

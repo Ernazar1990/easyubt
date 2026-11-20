@@ -175,7 +175,14 @@ function prepare(topics) {
       for (const lesson of chapter.lessons || []) {
         const match = String(lesson.title || "").match(/§\s*(\d+)/);
         if (!match) continue;
-        const text = repairedDescription(lesson);
+        let text = repairedDescription(lesson);
+        // §68 is specifically about metals reacting with oxygen and water.
+        // Keep the later non-metal subsection in the lesson notes, but exclude it
+        // from generated practice questions so chlorine-water is never keyed as
+        // a metal reaction in this lesson.
+        if (lesson.id === "chem_l68") {
+          text = text.split(/^####\s+4\.\s+Бейметалдардың сумен әрекеттесуі/im)[0];
+        }
         entries.push({
           ...lesson, subjectId, chapterTitle: chapter.title, sectionNumber: Number(match[1]),
           description: text, definition: definition(text), objectives: objectives(text),
