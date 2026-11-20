@@ -181,7 +181,7 @@ function prepare(topics) {
         // from generated practice questions so chlorine-water is never keyed as
         // a metal reaction in this lesson.
         if (lesson.id === "chem_l68") {
-          text = text.split(/^####\\s+4\\.\\s+Бейметалдардың сумен әрекеттесуі/im)[0];
+          text = text.split(/^####\s+4\.\s+Бейметалдардың сумен әрекеттесуі/im)[0];
         }
         entries.push({
           ...lesson, subjectId, chapterTitle: chapter.title, sectionNumber: Number(match[1]),
