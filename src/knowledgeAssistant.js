@@ -1,3 +1,5 @@
+import { getLessonDescription } from "./lessonPractice.js";
+
 const STOP_WORDS = new Set([
   "және", "үшін", "туралы", "деген", "дегеніміз", "не", "қалай", "қандай", "мен", "бұл", "сол", "осы",
   "түсіндір", "түсіндірші", "айтып", "бер", "please", "what", "is", "the", "of", "how"
@@ -16,7 +18,7 @@ function collectKnowledge({ topics = {}, content = {} } = {}) {
   for (const [subjectId, chapters] of Object.entries(topics || {})) {
     for (const chapter of chapters || []) {
       for (const lesson of chapter.lessons || []) {
-        const body = String(lesson.description || "").trim();
+        const body = String(getLessonDescription(lesson) || "").trim();
         if (body.length > 60) {
           entries.push({
             kind: "lesson",
@@ -126,4 +128,3 @@ export function answerFromKnowledgeBase(query, source) {
   const excerpt = cleanBody.length > 1200 ? `${cleanBody.slice(0, 1200).trim()}…` : cleanBody;
   return `${excerpt}\n\nДереккөз: ${entry.title}${entry.chapter ? ` · ${entry.chapter}` : ""}.`;
 }
-

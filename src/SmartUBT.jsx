@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import * as mammoth from "mammoth";
 import { FINAL_EXTRA } from "./finalExtra.js";
 import { answerFromKnowledgeBase } from "./knowledgeAssistant.js";
+import { getGeneratedFixQuestions, getLessonDescription } from "./lessonPractice.js";
 
 /* ════ RECHARTS ════ */
 /* Recharts CDN жүктеу алынып тасталды — Vite React-ты window.React етіп шығармайтындықтан, бұл UMD скрипт ешқашан дұрыс жұмыс істей алмайды (Layer.tsx: forwardRef қатесі). Статистика беті график компоненттерінің жоқтығын өзі тексеріп, оларсыз көрсетеді. */
@@ -2683,7 +2684,8 @@ function LessonsView({selSub,selTopic,getTops,setContent,setView,setModal,delLes
       )}
       <div style={{display:"flex",flexDirection:"column",gap:8}}>
         {tp.lessons.map((ls,i)=>{
-          const bQs=content.lessonTests?.[ls.id]||[];
+          const storedBQs=content.lessonTests?.[ls.id]||[];
+          const bQs=storedBQs.length?storedBQs:getGeneratedFixQuestions(ls.id,content.topics||TOPICS);
           const hQs=content.hwTests?.[ls.id]||[];
           const errW=content.lessonErrorWork?.[ls.id];
           const hasErr=errW?.videoUrl||errW?.pdfUrl;
@@ -3537,50 +3539,61 @@ const seededShuffle=(arr,seed)=>{
 // ── Жеңіл Markdown рендерер (сабақ теориясы үшін: #### / ### тақырыпша, **қалың**, - тізім, 1. нөмірленген тізім) ──
 function LessonRichText({text}){
   if(!text)return null;
-  const blocks=text.split(/\n\n+/);
-  const renderInline=(s,ki)=>{
-    const parts=s.split(/(\*\*[^*]+\*\*)/g);
-    return parts.map((p,i)=>p.startsWith("**")&&p.endsWith("**")
-      ?<b key={ki+"-"+i} style={{color:"#1E1B4B"}}>{p.slice(2,-2)}</b>
-      :<React.Fragment key={ki+"-"+i}>{p}</React.Fragment>);
+  const toSub=value=>String(value).replace(/[0-9a-z+\-()]/g,ch=>({"0":"₀","1":"₁","2":"₂","3":"₃","4":"₄","5":"₅","6":"₆","7":"₇","8":"₈","9":"₉",a:"ₐ",e:"ₑ",h:"ₕ",i:"ᵢ",j:"ⱼ",k:"ₖ",l:"ₗ",m:"ₘ",n:"ₙ",o:"ₒ",p:"ₚ",r:"ᵣ",s:"ₛ",t:"ₜ",u:"ᵤ",v:"ᵥ",x:"ₓ","+":"₊","-":"₋","(":"₍",")":"₎"}[ch]||ch));
+  const toSup=value=>String(value).replace(/[0-9a-z+\-()=]/g,ch=>({"0":"⁰","1":"¹","2":"²","3":"³","4":"⁴","5":"⁵","6":"⁶","7":"⁷","8":"⁸","9":"⁹",a:"ᵃ",b:"ᵇ",n:"ⁿ","+":"⁺","-":"⁻","(":"⁽",")":"⁾","=":"⁼"}[ch]||ch));
+  const mathText=value=>String(value)
+    .replace(/\\(?:mathrm|text)\{([^{}]*)\}/g,"$1")
+    .replace(/\\frac\{([^{}]+)\}\{([^{}]+)\}/g,"$1⁄$2")
+    .replace(/\\(?:times|cdot)/g,"×").replace(/\\approx/g,"≈").replace(/\\%/g,"%")
+    .replace(/\^\{([^}]+)\}/g,(_,v)=>toSup(v)).replace(/_\{([^}]+)\}/g,(_,v)=>toSub(v))
+    .replace(/\^([0-9+\-]+)/g,(_,v)=>toSup(v)).replace(/_([0-9]+|[a-z])/g,(_,v)=>toSub(v))
+    .replace(/\s+/g," ").trim();
+  const formatText=value=>mathText(value).replace(/\\%/g,"%");
+  const renderInline=(value,key)=>{
+    const parts=String(value).split(/(\*\*[^*]+\*\*|`[^`]+`|\$[^$\n]+\$)/g);
+    return parts.map((part,i)=>{
+      const k=`${key}-${i}`;
+      if(part.startsWith("**")&&part.endsWith("**"))return <b key={k} style={{color:"#1E1B4B"}}>{formatText(part.slice(2,-2))}</b>;
+      if(part.startsWith("`")&&part.endsWith("`"))return <code key={k} style={{fontFamily:"ui-monospace,monospace",background:"#F3F4F6",padding:"1px 4px",borderRadius:4}}>{formatText(part.slice(1,-1))}</code>;
+      if(part.startsWith("$")&&part.endsWith("$"))return <span key={k} style={{fontFamily:"ui-monospace,monospace",whiteSpace:"nowrap",color:"#312E81"}}>{mathText(part.slice(1,-1))}</span>;
+      return <React.Fragment key={k}>{formatText(part)}</React.Fragment>;
+    });
   };
+  const normalized=String(text).replace(/\r/g,"").replace(/^\s*\$\s*\n([\s\S]*?)\n\s*\$\s*$/gm,(_,equation)=>`$$${equation.trim()}$$`);
+  const blocks=normalized.split(/\n\s*\n+/);
+  const isDivider=line=>/^\|[\s:|−–—-]+\|$/.test(line.trim());
   return(
-    <div style={{color:"#374151",fontSize:14,lineHeight:1.75}}>
+    <div style={{color:"#374151",fontSize:14,lineHeight:1.8,overflowWrap:"anywhere"}}>
       {blocks.map((block,bi)=>{
         const lines=block.split("\n").filter(l=>l.trim());
         if(!lines.length)return null;
-        const isTableBlock=lines.length>=2&&lines[0].trim().startsWith("|")&&/^\|[\s:|-]+\|$/.test(lines[1]?.trim()||"");
-        if(isTableBlock){
-          const rows=[lines[0],...lines.slice(2)].map(l=>l.trim().replace(/^\||\|$/g,"").split("|").map(c=>c.trim()));
-          return(
-            <div key={bi} style={{overflowX:"auto",margin:"10px 0"}}>
-              <table style={{borderCollapse:"collapse",width:"100%",fontSize:13}}>
-                <thead><tr>{rows[0].map((c,ci)=><th key={ci} style={{textAlign:"left",padding:"6px 10px",background:"#EEF0FF",color:"#1E1B4B",fontWeight:800,border:"1px solid #E5E7EB"}}>{renderInline(c,bi+"h"+ci)}</th>)}</tr></thead>
-                <tbody>{rows.slice(1).map((r,ri)=><tr key={ri}>{r.map((c,ci)=><td key={ci} style={{padding:"6px 10px",border:"1px solid #E5E7EB"}}>{renderInline(c,bi+"r"+ri+"c"+ci)}</td>)}</tr>)}</tbody>
-              </table>
-            </div>
-          );
+        const trimmed=block.trim();
+        const mathBlock=trimmed.match(/^\$\$\s*([\s\S]*?)\s*\$\$$/);
+        if(mathBlock)return <div key={bi} role="math" style={{overflowX:"auto",margin:"12px 0",padding:"12px 16px",borderRadius:10,background:"#F8FAFC",textAlign:"center",fontFamily:"ui-monospace,monospace",fontSize:15,color:"#312E81"}}>{mathText(mathBlock[1])}</div>;
+        if(lines.length>=2&&lines[0].trim().startsWith("|")&&isDivider(lines[1])){
+          const rows=lines.filter((line,index)=>index!==1&&!isDivider(line)).map(line=>line.trim().replace(/^\||\|$/g,"").split("|").map(cell=>cell.trim()));
+          const head=rows[0]||[];
+          return <div key={bi} style={{overflowX:"auto",margin:"12px 0",border:"1px solid #E5E7EB",borderRadius:10}}><table style={{borderCollapse:"collapse",width:"100%",fontSize:13,minWidth:Math.min(head.length*105,560)}}><thead><tr>{head.map((cell,ci)=><th key={ci} scope="col" style={{textAlign:"left",padding:"9px 11px",background:"#EEF0FF",color:"#1E1B4B",fontWeight:800,borderBottom:"1px solid #DDE2F2"}}>{renderInline(cell,`${bi}h${ci}`)}</th>)}</tr></thead><tbody>{rows.slice(1).map((row,ri)=><tr key={ri} style={{background:ri%2?"#FAFBFF":"#fff"}}>{head.map((_,ci)=><td key={ci} style={{verticalAlign:"top",padding:"8px 11px",borderBottom:"1px solid #EEF0F4"}}>{renderInline(row[ci]||"",`${bi}r${ri}c${ci}`)}</td>)}</tr>)}</tbody></table></div>;
         }
-        if(/^####\s/.test(lines[0])){
-          return <div key={bi} style={{fontWeight:800,fontSize:14,color:"#4F46E5",marginTop:16,marginBottom:6}}>{renderInline(lines[0].replace(/^####\s/,""),bi)}</div>;
+        if(/^#{1,6}\s/.test(lines[0])){
+          const depth=lines[0].match(/^#+/)[0].length;
+          const label=lines[0].replace(/^#{1,6}\s/,"");
+          return <div key={bi} role={`heading`} aria-level={Math.min(depth+1,6)} style={{fontWeight:depth<=3?900:800,fontSize:depth<=2?18:depth===3?16:14,color:depth<=3?"#1E1B4B":"#4F46E5",marginTop:depth<=2?24:16,marginBottom:8,paddingTop:depth<=2?12:0,borderTop:depth<=2?"1px solid #EEF0FF":"none"}}>{renderInline(label,bi)}</div>;
         }
-        if(/^###\s/.test(lines[0])){
-          return <div key={bi} style={{fontWeight:900,fontSize:16,color:"#1E1B4B",marginTop:20,marginBottom:8,paddingTop:12,borderTop:"1px solid #EEF0FF"}}>{renderInline(lines[0].replace(/^###\s/,""),bi)}</div>;
+        if(lines.every(l=>/^\s*>/.test(l))){
+          return <blockquote key={bi} style={{margin:"10px 0",padding:"10px 14px",borderLeft:"4px solid #818CF8",borderRadius:"0 10px 10px 0",background:"#F5F6FF",color:"#374151"}}>{lines.map(l=>l.replace(/^\s*>\s?/,"")).map((line,i)=><React.Fragment key={i}>{i>0&&<br/>}{renderInline(line,`${bi}q${i}`)}</React.Fragment>)}</blockquote>;
         }
-        const isBulletBlock=lines.every(l=>/^-\s/.test(l.trim()));
-        const isNumBlock=lines.every(l=>/^\d+\.\s/.test(l.trim()));
-        if(isBulletBlock){
-          return <ul key={bi} style={{margin:"6px 0",paddingLeft:20}}>{lines.map((l,li)=><li key={li} style={{marginBottom:4}}>{renderInline(l.replace(/^-\s/,""),bi+"-"+li)}</li>)}</ul>;
+        if(lines.every(l=>/^\s*[-*+]\s/.test(l))){
+          return <ul key={bi} style={{margin:"8px 0",paddingLeft:22}}>{lines.map((line,i)=><li key={i} style={{paddingLeft:3,marginBottom:5}}>{renderInline(line.replace(/^\s*[-*+]\s/,""),`${bi}u${i}`)}</li>)}</ul>;
         }
-        if(isNumBlock){
-          return <ol key={bi} style={{margin:"6px 0",paddingLeft:20}}>{lines.map((l,li)=><li key={li} style={{marginBottom:4}}>{renderInline(l.replace(/^\d+\.\s/,""),bi+"-"+li)}</li>)}</ol>;
+        if(lines.every(l=>/^\s*\d+[.)]\s/.test(l))){
+          return <ol key={bi} style={{margin:"8px 0",paddingLeft:24}}>{lines.map((line,i)=><li key={i} style={{paddingLeft:3,marginBottom:5}}>{renderInline(line.replace(/^\s*\d+[.)]\s/,""),`${bi}o${i}`)}</li>)}</ol>;
         }
-        return <p key={bi} style={{margin:"0 0 10px"}}>{renderInline(block,bi)}</p>;
+        return <p key={bi} style={{margin:"0 0 12px"}}>{lines.map((line,i)=><React.Fragment key={i}>{i>0&&<br/>}{renderInline(line,`${bi}p${i}`)}</React.Fragment>)}</p>;
       })}
     </div>
   );
 }
-
 // ── ҰБТ балл жүйесі: 1 балдық (бір жауап/мәнмәтін) және 2 балдық (сәйкестендіру/көп жауап) ──
 const isMultiQ=q=>!!(q.multi||q.type==="multi");
 const qWeight=q=>(q.type==="match"||isMultiQ(q))?2:1;
@@ -4057,7 +4070,9 @@ function SmartUBTInner(){
     const configCount=(content[countKey]||{})[lid]||(mode==="hw"?20:10);
     const isRev=String(lid).endsWith("_review");
     const useExtraOnly=isRev&&mode!=="hw"&&FINAL_EXTRA[lid]?.replace;
-    const pool=useExtraOnly?extraFor(lid):[...((mode==="hw"?content.hwTests?.[lid]:content.lessonTests?.[lid])||[]),...(isRev&&mode!=="hw"?extraFor(lid):[])];
+    const savedPool=(mode==="hw"?content.hwTests?.[lid]:content.lessonTests?.[lid])||[];
+    const generatedPool=mode==="fix"&&!isRev&&!savedPool.length?getGeneratedFixQuestions(lid,content.topics||TOPICS):[];
+    const pool=useExtraOnly?extraFor(lid):[...savedPool,...generatedPool,...(isRev&&mode!=="hw"?extraFor(lid):[])];
     if(!pool.length)return showToast(mode==="hw"?"Үй жұмысы сұрақтары жоқ":"Бекіту сұрақтары жоқ","err");
     const fin=isRev&&mode!=="hw"?buildFinal(pool):null;
     const qs=fin?fin.qs:[...pool].sort(()=>Math.random()-0.5);
@@ -5143,7 +5158,8 @@ function SmartUBTInner(){
 
     const saveLp=(patch)=>updateUser(prev=>({lessonProgress:{...prev.lessonProgress,[lessonId]:{...(prev.lessonProgress?.[lessonId]||{}),...patch}}}));
 
-    const fixQs    = content.lessonTests?.[lessonId]||[];
+    const savedFixQs=content.lessonTests?.[lessonId]||[];
+    const fixQs    = savedFixQs.length?savedFixQs:getGeneratedFixQuestions(lessonId,content.topics||TOPICS);
     const hwQs     = content.hwTests?.[lessonId]||[];
     const writingQs= content.writingTasks?.[lessonId]||[];
     const hwResult = lp.hwResult||null;
@@ -5361,7 +5377,7 @@ function SmartUBTInner(){
             <div>
               <div style={{...C.card,padding:20,marginBottom:14}}>
                 <div style={{fontWeight:800,fontSize:16,marginBottom:12}}>📘 Теория</div>
-                <LessonRichText text={lesson.description}/>
+                <LessonRichText text={getLessonDescription(lesson)}/>
               </div>
               <div style={{...C.card,padding:20,marginBottom:14}}>
                 <div style={{fontWeight:800,fontSize:16,marginBottom:12}}>📄 Мұғалімнің конспекті</div>
