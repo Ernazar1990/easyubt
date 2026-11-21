@@ -5138,10 +5138,19 @@ function SmartUBTInner(){
   ════════════════════════════════════════════════════════ */
   const PageLesson=()=>{
     const sub=SUBJECTS.find(s=>s.id===subjectId);
-    const topic=(content.topics[subjectId]||[]).find(t=>t.id===topicId);
+    const subjectTopics=(content.topics||{})[subjectId]||[];
+    const topic=subjectTopics.find(t=>t.id===topicId);
     const lesson=topic?.lessons?.find(l=>l.id===lessonId);
 
     if(!sub||!lesson)return <div style={{padding:40,textAlign:"center",color:"#9CA3AF"}}>Сабақ табылмады</div>;
+
+    const isReview=lesson.id.endsWith("_review");
+    const lessonSequence=subjectTopics.flatMap((tp,topicIndex)=>(tp.lessons||[]).map((ls,lessonIndex)=>({topic:tp,lesson:ls,topicIndex,lessonIndex})));
+    const currentLessonIndex=lessonSequence.findIndex(item=>item.lesson.id===lessonId);
+    const nextLessonItem=currentLessonIndex>=0?lessonSequence[currentLessonIndex+1]:null;
+    const unlockedIds=content.unlockedLessons?.[subjectId]||[];
+    const isEnrolled=user?.role==="superadmin"||user?.role==="admin"||user?.plan==="premium"||user?.plan==="basic"||(user?.plan==="package"&&(PACKAGES.find(p=>p.id===user.packageId)?.subjects||[]).includes(subjectId));
+    const nextLessonUnlocked=!!nextLessonItem&&(isEnrolled||(user?.plan==="free"&&nextLessonItem.topicIndex===0&&nextLessonItem.lessonIndex===0)||unlockedIds.includes(nextLessonItem.lesson.id)||nextLessonItem.lesson.isFree);
 
     /* ── progress helpers ── */
     const lp=user?.lessonProgress?.[lessonId]||{};
@@ -5154,7 +5163,7 @@ function SmartUBTInner(){
     const hwOk     = (lp.hwScore||0)>=80;
     const errWork  = content.lessonErrorWork?.[lessonId];
     const errHasContent = !!(errWork?.videoUrl||errWork?.pdfUrl);
-    const fullyDone= videoOk&&bekituOk&&konspektOk&&jazbaOk&&hwOk&&errHasContent;
+    const fullyDone=isReview?bekituOk&&errHasContent:videoOk&&bekituOk&&konspektOk&&jazbaOk&&hwOk&&errHasContent;
 
     const saveLp=(patch)=>updateUser(prev=>({lessonProgress:{...prev.lessonProgress,[lessonId]:{...(prev.lessonProgress?.[lessonId]||{}),...patch}}}));
 
@@ -5168,7 +5177,6 @@ function SmartUBTInner(){
     const noteText=lessonNote; const setNoteText=setLessonNote;
 
     /* ── tab definitions ── */
-    const isReview=lesson.id.endsWith("_review");
     const STEPS=isReview?[
       {id:"bekitu",  icon:"📝", label:"Тарау тесті",  unlocked:true,     done:bekituOk},
       {id:"error",   icon:"🔄", label:"Қатемен жұмыс",unlocked:bekituOk, done:bekituOk&&errHasContent},
@@ -5583,7 +5591,7 @@ function SmartUBTInner(){
 
         {/* ══ 6. ҚАТЕМЕН ЖҰМЫС ══ */}
         {lessonTab==="error"&&(
-          !hwOk?lockedBox("Алдымен үй жұмысын 80%+ орындаңыз 📝"):(
+          !(isReview?bekituOk:hwOk)?lockedBox(isReview?"Алдымен тарау тестін 80%+ орындаңыз ✅":"Алдымен үй жұмысын 80%+ орындаңыз 📝"):(
           <div>
             <div style={{...C.card,padding:24,marginBottom:14}}>
               <div style={{fontWeight:900,fontSize:18,marginBottom:4}}>🔄 Қатемен жұмыс</div>
@@ -5621,6 +5629,20 @@ function SmartUBTInner(){
                       ))}
                     </div>
                   )}
+                  <div style={{display:"flex",justifyContent:"center",marginTop:20}}>
+                    {nextLessonItem?(
+                      <button style={{...C.btn,...C.pri,padding:"13px 22px",fontWeight:800}} onClick={()=>{
+                        if(!nextLessonUnlocked){setAdminModal({type:"payment"});return;}
+                        updateUser(prev=>({progress:{...(prev.progress||{}),[lessonId]:true}}));
+                        setSubjectId(subjectId);setTopicId(nextLessonItem.topic.id);setLessonId(nextLessonItem.lesson.id);
+                        setLessonTab(nextLessonItem.lesson.id.endsWith("_review")?"bekitu":"video");setGameMode(null);setPage("lesson");
+                      }}>{nextLessonUnlocked?"Келесі параграфқа өту →":"🔒 Келесі параграфқа қол жеткізу"}</button>
+                    ):(
+                      <button style={{...C.btn,...C.pri,padding:"13px 22px",fontWeight:800}} onClick={()=>{
+                        updateUser(prev=>({progress:{...(prev.progress||{}),[lessonId]:true}}));setPage("lessons");
+                      }}>📚 Бөлімдер тізіміне өту</button>
+                    )}
+                  </div>
                 </div>
               ):(
                 <div style={{textAlign:"center",padding:"24px 0"}}>
@@ -5840,6 +5862,16 @@ function SmartUBTInner(){
             <button style={{...C.btn,...C.pri}} onClick={retry}>🔄 Қайта тапсыру</button>
             {result.wrong?.length>0&&<button style={{...C.btn,...C.warn,fontWeight:700}} onClick={()=>startQuestionsTest(test.qs.filter(q=>result.wrong.includes(q.id)).map(q=>({...q})),test.sid,"errors")}>🔄 Қатемен жұмыс ({result.wrong.length})</button>}
             {result.score>=70&&<button style={{...C.btn,background:"linear-gradient(135deg,#F59E0B,#D97706)",color:"#fff",fontWeight:700}} onClick={()=>setCertModal(result)}>🏅 Сертификат</button>}
+            {result.mode==="fix"&&result.lessonId&&result.score>=80&&(()=>{
+              const isReview=String(result.lessonId).endsWith("_review");
+              const nextTab=isReview?"error":"konspekt";
+              return <button style={{...C.btn,...C.pri,fontWeight:800}} onClick={()=>{
+                const topics=(content.topics||{})[result.sid]||[];
+                const topic=topics.find(t=>(t.lessons||[]).some(ls=>ls.id===result.lessonId));
+                setSubjectId(result.sid);if(topic)setTopicId(topic.id);setLessonId(result.lessonId);
+                setLessonTab(nextTab);setGameMode(null);setPage("lesson");
+              }}>{isReview?"Қатемен жұмысқа өту →":"Келесі бөлімге өту →"}</button>;
+            })()}
             <button style={{...C.btn,...C.sec}} onClick={()=>setPage("home")}>🏠 Басты бет</button>
             <button style={{...C.btn,background:"#25D366",color:"#fff",fontWeight:700}} onClick={()=>{
               const txt=`🎓 SmartUBT нәтижем: ${result.points!==undefined?result.points+"/"+result.maxPoints+" балл":result.score+"%"} — ${result.subjectName}! 💪`;
